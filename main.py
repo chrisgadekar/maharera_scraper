@@ -147,7 +147,7 @@ async def main():
         return
 
     logging.info(f"Total records to process: {len(df_todo)} out of {len(df_input)}.")
-    df_todo = df_todo.iloc[:20]
+    df_todo = df_todo.iloc[[9876]]
     logging.info("--- 🧪 TEST MODE: Sirf 10th entry  process kiye ja rahe hain. ---")
 
     captcha_solver = CaptchaSolver()

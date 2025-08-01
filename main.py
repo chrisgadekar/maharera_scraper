@@ -59,7 +59,9 @@ def save_record(data: dict, filename: str):
              "Are there investors other than promoter",
              "Litigation against this project",
              "Identification of Wing as per Sanctioned Plan",
-             "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)"
+             "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)",
+             "Open Space Parking",
+             "Closed Space Parking"
         ]
 
         df = pd.json_normalize([data])

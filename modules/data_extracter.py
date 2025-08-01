@@ -30,7 +30,8 @@ class DataExtracter:
                 self._extract_landowner_type(page),
                 self._extract_investor_flag(page),
                 self._extract_litigation_details(page),
-                self._extract_building_details(page)
+                self._extract_building_details(page),
+                self._extract_parking_details(page)
                 
             ]
 
@@ -608,3 +609,63 @@ class DataExtracter:
                 "Identification of Wing as per Sanctioned Plan": None,
                 "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)": None
             }
+        
+    async def _extract_parking_details(self, page: Page) -> Dict[str, Any]:
+        """Extracts Open and Closed space parking details from all tables under Parking Details."""
+        try:
+            button = page.locator("button:has-text('Parking Details')")
+            await button.wait_for(timeout=10000)
+            await button.click()
+            self.logger.info("✅ Clicked on Parking Details accordion.")
+
+            parking_section = page.locator("div#parkingDetails.show")
+            await parking_section.wait_for(timeout=7000)
+            self.logger.info("✅ Parking details section is visible.")
+
+            tables = parking_section.locator("table.table-bordered")
+            table_count = await tables.count()
+            self.logger.info(f"🧾 Found {table_count} parking table(s).")
+
+            open_counts = []
+            closed_counts = []
+
+            for i in range(table_count):
+                table = tables.nth(i)
+                rows = table.locator("tbody tr")
+                row_count = await rows.count()
+                open_sum, closed_sum = 0, 0
+
+                for j in range(row_count):
+                    cells = rows.nth(j).locator("td")
+                    if await cells.count() < 7: # Make sure the row has enough columns
+                        continue
+
+                    # --- THIS IS THE FIX ---
+                    # Get the label from the 2nd column (index 1)
+                    label = (await cells.nth(1).inner_text()).strip().lower()
+                    # Get the value from the 7th column (index 6) - "Total No Of Parking"
+                    value_text = (await cells.nth(6).inner_text()).strip()
+                    # --- END OF FIX ---
+
+                    try:
+                        count_match = re.search(r'\d+', value_text)
+                        count = int(count_match.group()) if count_match else 0
+                    except (ValueError, AttributeError):
+                        count = 0
+
+                    if "open" in label:
+                        open_sum += count
+                    elif "closed" in label or "covered" in label:
+                        closed_sum += count
+
+                open_counts.append(str(open_sum))
+                closed_counts.append(str(closed_sum))
+
+            return {
+                "Open Space Parking": ", ".join(open_counts) if open_counts else None,
+                "Closed Space Parking": ", ".join(closed_counts) if closed_counts else None
+            }
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract parking details: {e}")
+            return {"Open Space Parking": None, "Closed Space Parking": None}

@@ -32,7 +32,9 @@ class DataExtracter:
                 self._extract_litigation_details(page),
                 self._extract_building_details(page),
                 self._extract_parking_details(page),
-                self._extract_bank_details(page)
+                self._extract_bank_details(page),
+                self._extract_complaint_details(page),
+                self._extract_real_estate_agents(page)
                 
             ]
 
@@ -724,3 +726,114 @@ class DataExtracter:
                 "ifsc_code": None,
                 "bank_address": None
             }
+        
+    async def _extract_complaint_details(self, page: Page) -> Dict[str, Any]:
+        """
+        Extracts number of complaints and complaint numbers from the 'Complaint Details' section.
+        """
+        try:
+            self.logger.info("🔍 Extracting Complaint Details...")
+
+            # 1. Locate the div with <b>Complaint Details</b>
+            complaint_header = page.locator("text='Complaint Details'").first
+            table = complaint_header.locator("xpath=following::table[contains(@class, 'table-bordered')][1]")
+            await table.wait_for(timeout=5000)
+
+            # 2. Locate tbody rows
+            rows = table.locator("tbody tr")
+            row_count = await rows.count()
+
+            # Check for "No Records Found"
+            if row_count == 1:
+                cell_text = (await rows.nth(0).inner_text()).strip()
+                if "No Records Found" in cell_text:
+                    return {
+                        "complaint_count": 0,
+                        "complaint_numbers": ""
+                    }
+
+            # 3. Extract complaint numbers (2nd column of each row)
+            complaint_numbers = []
+            for i in range(row_count):
+                cells = rows.nth(i).locator("td")
+                num_cols = await cells.count()
+                if num_cols >= 2:
+                    complaint_no = (await cells.nth(1).inner_text()).strip()
+                    complaint_numbers.append(complaint_no)
+
+            return {
+                "complaint_count": len(complaint_numbers),
+                "complaint_numbers": ", ".join(complaint_numbers)
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to extract complaint details: {e}")
+            return {
+                "complaint_count": 0,
+                "complaint_numbers": ""
+            }
+
+
+
+    async def _extract_real_estate_agents(self, page: Page) -> Dict[str, Any]:
+        """
+        Extracts Real Estate Agent details defensively, handling cases where no table exists.
+        """
+        try:
+            self.logger.info("🧾 Extracting Registered Real Estate Agent(s)...")
+
+            # STEP 1: First, check if the section even exists on the page.
+            accordion_button = page.locator("button.accordion-button:has-text('Registered Real Estate Agent(s)')")
+            try:
+                # Use a short timeout to quickly check for the button's existence.
+                await accordion_button.wait_for(state="attached", timeout=5000)
+            except PlaywrightError:
+                self.logger.info("Section 'Registered Real Estate Agent(s)' not found. Skipping.")
+                return {"real_estate_agents": None, "maharera_cert_numbers": None}
+
+            # STEP 2: Dynamically get the ID of the content pane and expand if needed.
+            target_id_selector = await accordion_button.get_attribute("data-bs-target")
+            if not target_id_selector:
+                raise Exception("Could not find 'data-bs-target' on accordion button.")
+
+            if await accordion_button.get_attribute("aria-expanded") == "false":
+                await accordion_button.click()
+                # Wait for the animation to finish by waiting for the .show class.
+                await page.locator(f"{target_id_selector}.show").wait_for(timeout=5000)
+
+            # STEP 3: THIS IS THE KEY FIX. Check if a table exists before trying to access it.
+            table_container = page.locator(target_id_selector)
+            table = table_container.locator("table.table-bordered")
+
+            # Give the UI a brief moment to render the table after the accordion expands.
+            await asyncio.sleep(0.5) 
+
+            if await table.count() == 0:
+                # If no table is found, log it as a success and move on.
+                self.logger.info("✅ Section expanded, but no agent data table was found.")
+                return {"real_estate_agents": None, "maharera_cert_numbers": None}
+            
+            # If we get here, the table exists. Now we can extract from it.
+            self.logger.info("✅ Agent table is present. Proceeding with extraction.")
+
+            # STEP 4: Extract data from the table.
+            rows = table.locator("tbody tr")
+            row_count = await rows.count()
+            agents, cert_nos = [], []
+
+            for i in range(row_count):
+                cells = rows.nth(i).locator("td")
+                if await cells.count() >= 3:
+                    name = (await cells.nth(1).inner_text()).strip()
+                    cert = (await cells.nth(2).inner_text()).strip()
+                    if name: agents.append(name)
+                    if cert: cert_nos.append(cert)
+
+            return {
+                "real_estate_agents": ", ".join(agents) if agents else None,
+                "maharera_cert_numbers": ", ".join(cert_nos) if cert_nos else None
+            }
+
+        except Exception as e:
+            self.logger.error(f"❌ An unexpected error occurred while extracting real estate agent details: {e}")
+            return {"real_estate_agents": None, "maharera_cert_numbers": None}

@@ -25,7 +25,9 @@ class DataExtracter:
                 self._extract_partner_details(page),
                 self._extract_promoter_past_experience(page),
                 self._extract_authorised_signatory(page),
-                self._extract_project_professionals(page)
+                self._extract_project_professionals(page),
+                self._extract_sro_details(page),
+                self._extract_landowner_type(page)
                 
             ]
 
@@ -354,20 +356,31 @@ class DataExtracter:
 
     async def _extract_project_professionals(self, page: Page) -> dict:
         data = {
-            "Architect": "",
-            "Engineer": "",
-            "Other": ""
+            "Architect": None,
+            "Engineer": None,
+            "Other": None
         }
 
         try:
-            # Expand the section (Click "Click to see list")
             await page.click("text=Click to see list")
 
-            # Wait for the table to load
-            await page.wait_for_selector("#collapseProjectProfessionals table tbody tr")
+            # Wait for the accordion section to expand
+            await page.wait_for_selector("#collapseProjectProfessionals.show", timeout=5000)
 
-            # Get all rows
-            rows = await page.query_selector_all("#collapseProjectProfessionals table tbody tr")
+            # Retry loop to wait for rows if needed
+            for _ in range(5):
+                rows = await page.query_selector_all("#collapseProjectProfessionals table tbody tr")
+                if rows:
+                    break
+                await page.wait_for_timeout(500)  # wait 0.5s and retry
+
+            if not rows:
+                self.logger.warning("❌ No rows found in Project Professionals section.")
+                return data
+
+            architect_names = []
+            engineer_names = []
+            other_names = []
 
             for row in rows:
                 cols = await row.query_selector_all("td")
@@ -380,17 +393,112 @@ class DataExtracter:
                 if prof_type.lower() == "real estate agent":
                     continue
                 elif prof_type.lower() == "architect":
-                    data["Architect"] += name + ", "
+                    architect_names.append(name)
                 elif prof_type.lower() == "engineer":
-                    data["Engineer"] += name + ", "
+                    engineer_names.append(name)
                 else:
-                    data["Other"] += name + ", "
+                    other_names.append(name)
 
-            # Remove trailing commas and spaces
-            for key in data:
-                data[key] = data[key].rstrip(", ")
+            data["Architect"] = ", ".join(architect_names) if architect_names else None
+            data["Engineer"] = ", ".join(engineer_names) if engineer_names else None
+            data["Other"] = ", ".join(other_names) if other_names else None
 
         except Exception as e:
-            print(f"Error in _extract_project_professionals: {e}")
+            self.logger.warning(f"❌ Could not extract project professionals: {e}")
 
         return data
+    
+
+    async def _extract_sro_details(self, page: Page) -> Dict[str, Any]:
+        """Extract SRO Details: Promoter Project Member Number and SRO Membership Type Name."""
+        try:
+            # Locate <b>SRO Details</b> inside a div
+            sro_header = page.locator("div.text-align-left:has(b:text('SRO Details'))")
+            await sro_header.wait_for(timeout=5000)
+
+            # Get the <hr> tag that comes after the header
+            hr = sro_header.locator("xpath=following-sibling::hr[1]")
+            await hr.wait_for(timeout=5000)
+
+            # Then the div that comes right after <hr> and contains the table
+            container_div = hr.locator("xpath=following-sibling::div[1]")
+            await container_div.wait_for(timeout=5000)
+
+            # Inside that div, find the table
+            sro_table = container_div.locator("table.table-bordered")
+            await sro_table.wait_for(timeout=5000)
+
+            # Check tbody rows
+            rows = sro_table.locator("tbody > tr")
+            row_count = await rows.count()
+
+            promoter_numbers = []
+            membership_types = []
+
+            for i in range(row_count):
+                row = rows.nth(i)
+                cells = row.locator("td")
+                cell_count = await cells.count()
+
+                # Skip if "No Record Found"
+                if cell_count == 1:
+                    cell_text = await cells.nth(0).inner_text()
+                    if "No Record Found" in cell_text:
+                        return {
+                            "Promoter Project Member Number": None,
+                            "SRO Membership Type Name": None
+                        }
+
+                if cell_count >= 3:
+                    promoter = await cells.nth(1).inner_text()
+                    membership = await cells.nth(2).inner_text()
+                    promoter_numbers.append(promoter.strip())
+                    membership_types.append(membership.strip())
+
+            return {
+                "Promoter Project Member Number": ", ".join(promoter_numbers) if promoter_numbers else None,
+                "SRO Membership Type Name": ", ".join(membership_types) if membership_types else None
+            }
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract SRO details: {e}")
+            return {
+                "Promoter Project Member Number": None,
+                "SRO Membership Type Name": None
+            }
+        
+    async def _extract_landowner_type(self, page: Page) -> Dict[str, Any]:
+        """Extract selected Landowner Type(s) from checkbox group."""
+        try:
+            # Locate the section containing the label 'Landowner types in the project'
+            label_section = page.locator("label:has-text('Landowner types in the project')")
+            await label_section.wait_for(timeout=5000)
+
+            # Go up to the container div which wraps all checkboxes
+            container_div = label_section.locator("xpath=ancestor::div[contains(@class, 'col-sm-12')]")
+            checkboxes = container_div.locator("input.declerationCheckBox")
+            labels = container_div.locator("label.form-check-label")
+
+            count = await checkboxes.count()
+            selected_types = []
+
+            for i in range(count):
+                checkbox = checkboxes.nth(i)
+                is_checked = await checkbox.is_checked()
+
+                if is_checked:
+                    label = labels.nth(i)
+                    text = await label.inner_text()
+                    selected_types.append(text.strip())
+
+            return {
+                "Landowner Type": ", ".join(selected_types) if selected_types else None
+            }
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract landowner type: {e}")
+            return {
+                "Landowner Type": None
+            }
+
+

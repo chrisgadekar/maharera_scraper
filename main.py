@@ -49,7 +49,13 @@ def save_record(data: dict, filename: str):
             "promoter_past_project_statuses",
             "promoter_past_litigation_statuses",
             "authorised_signatory_names",
-            "authorised_signatory_designations"
+            "authorised_signatory_designations",
+            "Architect",
+            "Engineer",
+            "Other",
+            "Promoter Project Member Number",
+            "SRO Membership Type Name",
+             "Landowner Type"
         ]
 
         df = pd.json_normalize([data])
@@ -128,7 +134,7 @@ async def main():
         return
 
     logging.info(f"Total records to process: {len(df_todo)} out of {len(df_input)}.")
-    df_todo = df_todo.iloc[:3]
+    df_todo = df_todo.iloc[:2]
     logging.info("--- 🧪 TEST MODE: Sirf 10th entry  process kiye ja rahe hain. ---")
 
     captcha_solver = CaptchaSolver()

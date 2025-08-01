@@ -27,7 +27,10 @@ class DataExtracter:
                 self._extract_authorised_signatory(page),
                 self._extract_project_professionals(page),
                 self._extract_sro_details(page),
-                self._extract_landowner_type(page)
+                self._extract_landowner_type(page),
+                self._extract_investor_flag(page),
+                self._extract_litigation_details(page),
+                self._extract_building_details(page)
                 
             ]
 
@@ -502,3 +505,106 @@ class DataExtracter:
             }
 
 
+    async def _extract_investor_flag(self, page: Page) -> Dict[str, Any]:
+        """Check if there are investors other than promoter in the project."""
+        try:
+            # Locate the label with the specific question
+            question_label = page.locator("label.form-label-preview-label:has-text('Investor other than the Promoter')")
+            await question_label.wait_for(timeout=5000)
+
+            # Go to the next label that contains the answer
+            answer_label = question_label.locator("xpath=following-sibling::label[@class='form-label-preview-text']")
+            bold_text = answer_label.locator("b")
+            answer = (await bold_text.inner_text()).strip()
+
+            return {
+                "Are there investors other than promoter": answer
+            }
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract investor info: {e}")
+            return {
+                "Are there investors other than promoter": None
+            }
+        
+    async def _extract_litigation_details(self, page: Page) -> Dict[str, Any]:
+        """Extract litigation status and number of litigations against the project."""
+        try:
+            # Step 1: Locate the label with the question
+            label_question = page.locator("label.form-label-preview-label:has-text('litigation against this proposed project')")
+            await label_question.wait_for(timeout=5000)
+
+            # Step 2: Get the answer label (Yes/No)
+            label_answer = label_question.locator("xpath=following-sibling::label[@class='form-label-preview-text']")
+            answer_text = (await label_answer.inner_text()).strip().lower()
+
+            if answer_text == "no":
+                return {"Litigation against this project": 0}
+
+            # Step 3: If Yes, find the table nearby and count rows
+            # Go up to the common container and look for table
+            container_div = label_question.locator("xpath=ancestor::div[contains(@class, 'col-sm-12')]")
+            table = container_div.locator("xpath=following::table[1]")
+            await table.wait_for(timeout=5000)
+
+            rows = table.locator("tbody > tr")
+            row_count = await rows.count()
+
+            return {"Litigation against this project": row_count}
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract litigation info: {e}")
+            return {"Litigation against this project": None}
+
+    async def _extract_building_details(self, page: Page) -> Dict[str, Any]:
+        """Extract Identification of Wing and Number of Sanctioned Floors from Building Details."""
+        try:
+            # Step 1: Locate <b>Building Details</b>
+            b_element = page.locator("b:text-is('Building Details')")
+            await b_element.wait_for(timeout=5000)
+
+            # Step 2: Go up to its containing div with col-sm-12 class
+            container_div = b_element.locator("xpath=ancestor::div[contains(@class, 'col-sm-12')]")
+            await container_div.wait_for(timeout=5000)
+
+            # Step 3: Find <hr> immediately after the container
+            hr = container_div.locator("xpath=following-sibling::hr[1]")
+            await hr.wait_for(timeout=5000)
+
+            # Step 4: Find the table immediately after <hr>
+            table = hr.locator("xpath=following-sibling::table[contains(@class, 'table-bordered')]")
+            await table.wait_for(timeout=5000)
+
+            # Step 5: Extract rows from tbody
+            rows = table.locator("tbody > tr")
+            row_count = await rows.count()
+
+            wing_ids = []
+            sanctioned_floors = []
+
+            for i in range(row_count):
+                row = rows.nth(i)
+
+                # Skip 'Total' row or blank rows
+                inner_text = (await row.inner_text()).strip().lower()
+                if not inner_text or "total" in inner_text:
+                    continue
+
+                cells = row.locator("td")
+                if await cells.count() >= 4:
+                    wing = await cells.nth(1).inner_text()
+                    floor = await cells.nth(3).inner_text()
+                    wing_ids.append(wing.strip())
+                    sanctioned_floors.append(floor.strip())
+
+            return {
+                "Identification of Wing as per Sanctioned Plan": ", ".join(wing_ids) if wing_ids else None,
+                "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)": ", ".join(sanctioned_floors) if sanctioned_floors else None
+            }
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract building details: {e}")
+            return {
+                "Identification of Wing as per Sanctioned Plan": None,
+                "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)": None
+            }

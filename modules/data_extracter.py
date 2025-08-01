@@ -31,7 +31,8 @@ class DataExtracter:
                 self._extract_investor_flag(page),
                 self._extract_litigation_details(page),
                 self._extract_building_details(page),
-                self._extract_parking_details(page)
+                self._extract_parking_details(page),
+                self._extract_bank_details(page)
                 
             ]
 
@@ -669,3 +670,57 @@ class DataExtracter:
         except Exception as e:
             self.logger.warning(f"❌ Could not extract parking details: {e}")
             return {"Open Space Parking": None, "Closed Space Parking": None}
+        
+
+    async def _extract_bank_details(self, page: Page) -> Dict[str, Optional[str]]:
+        """
+        Extracts Bank Name, IFSC Code, and Bank Address reliably by mapping labels to input/textarea fields.
+        """
+        try:
+            self.logger.info("🔍 Extracting Bank Details...")
+
+            container = page.locator("project-bank-details-preview")
+            await container.wait_for(timeout=10000)
+
+            fields_to_extract = {
+                "Bank Name": "bank_name",
+                "IFSC Code": "ifsc_code",
+                "Bank Address": "bank_address"
+            }
+
+            result = {
+                "bank_name": None,
+                "ifsc_code": None,
+                "bank_address": None
+            }
+
+            # Get all .row > .col-sm... elements where label & field are siblings
+            rows = container.locator(".row > .col-sm-12")
+            count = await rows.count()
+
+            for i in range(count):
+                col = rows.nth(i)
+                label = col.locator("label")
+                input_or_textarea = col.locator("input, textarea")
+
+                try:
+                    label_text = (await label.inner_text()).strip()
+                    value = (await input_or_textarea.input_value()).strip()
+
+                    if label_text in fields_to_extract:
+                        result[fields_to_extract[label_text]] = value
+                        self.logger.debug(f"✅ {label_text}: {value}")
+                except Exception as inner_e:
+                    self.logger.warning(f"⚠️ Skipped a bank field due to: {inner_e}")
+                    continue
+
+            self.logger.info(f"✅ Extracted bank details: {result}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to extract bank details: {e}")
+            return {
+                "bank_name": None,
+                "ifsc_code": None,
+                "bank_address": None
+            }

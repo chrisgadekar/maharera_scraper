@@ -61,7 +61,10 @@ def save_record(data: dict, filename: str):
              "Identification of Wing as per Sanctioned Plan",
              "Number of Sanctioned Floors (Incl. Basement+Stilt+Podium+Service+Habitable)",
              "Open Space Parking",
-             "Closed Space Parking"
+             "Closed Space Parking",
+             "bank_name",
+             "ifsc_code",
+             "bank_address"
         ]
 
         df = pd.json_normalize([data])

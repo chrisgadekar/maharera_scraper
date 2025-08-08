@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Any
 import logging
 from playwright.async_api import Page, expect
 
+logger = logging.getLogger(__name__)
+
 class DataExtracter:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -17,24 +19,25 @@ class DataExtracter:
             tasks = [
                 self._extract_registration_block(page),
                 self._extract_project_details_block(page),
+                self._extract_planning_authority_block(page),
                 self._extract_planning_land_block(page),
                 # self._extract_commencement_certificate(page),
-                self._extract_project_address(page),
-                self._extract_promoter_details(page),
-                self._extract_promoter_address(page),
-                self._extract_partner_details(page),
-                self._extract_promoter_past_experience(page),
-                self._extract_authorised_signatory(page),
-                self._extract_project_professionals(page),
-                self._extract_sro_details(page),
-                self._extract_landowner_type(page),
-                self._extract_investor_flag(page),
-                self._extract_litigation_details(page),
-                self._extract_building_details(page),
-                self._extract_parking_details(page),
-                self._extract_bank_details(page),
-                self._extract_complaint_details(page),
-                self._extract_real_estate_agents(page)
+                # self._extract_project_address(page),
+                # self._extract_promoter_details(page),
+                # self._extract_promoter_address(page),
+                # self._extract_partner_details(page),
+                # self._extract_promoter_past_experience(page),
+                # self._extract_authorised_signatory(page),
+                # self._extract_project_professionals(page),
+                # self._extract_sro_details(page),
+                # self._extract_landowner_type(page),
+                # self._extract_investor_flag(page),
+                # self._extract_litigation_details(page),
+                # self._extract_building_details(page),
+                # self._extract_parking_details(page),
+                # self._extract_bank_details(page),
+                # self._extract_complaint_details(page),
+                # self._extract_real_estate_agents(page)
                 
             ]
 
@@ -52,43 +55,130 @@ class DataExtracter:
             self.logger.error(f"Fatal error extracting data for {reg_no}: {e}")
             return None
 
+
+
+
+
+
+
     async def _extract_registration_block(self, page: Page) -> Dict[str, str]:
         try:
-            reg_number = await page.locator("label:has-text('Registration Number') + label").inner_text(timeout=5000)
-            reg_date = await page.locator("label:has-text('Date of Registration') + label").inner_text(timeout=5000)
-            return {
+            reg_number = await page.locator("label[for='yourUsername']:has-text('Registration Number')").locator("xpath=following-sibling::label[1]").inner_text(timeout=5000)
+            reg_date = await page.locator("label[for='yourUsername']:has-text('Date of Registration')").locator("xpath=following-sibling::label[1]").inner_text(timeout=5000)
+
+            result = {
                 'registration_number': reg_number.strip(),
                 'date_of_registration': reg_date.strip()
             }
+
+            self.logger.info(f"Extracted Registration Block: {result}")  # ✅ Logging the result
+
+            return result
         except Exception as e:
             self.logger.warning(f"Could not extract Registration Block: {e}")
             return {}
 
+
+
+
     async def _extract_project_details_block(self, page: Page) -> Dict[str, str]:
         data = {}
+
         fields = {
             'project_name': "Project Name",
-            'project_status': "Project Status",
             'project_type': "Project Type",
             'project_location': "Project Location",
             'proposed_completion_date': "Proposed Completion Date (Original)"
         }
+
         try:
             for key, label in fields.items():
-                selector = f"label.form-label-preview-label:has-text('{label}') + label.form-control"
-                value = await page.locator(selector).inner_text(timeout=5000)
-                data[key] = value.strip() if value else None
+                locator = page.locator(f"div:text-is('{label}')").nth(0)
+                value_locator = locator.locator("xpath=following-sibling::div[1]")
+                value = await value_locator.inner_text(timeout=5000)
+                data[key] = value.strip()
+
+            # Handle optional Revised Date (Extension Date)
+            try:
+                ext_label = "Proposed Completion Date (Revised)"
+                ext_locator = page.locator(f"div:text-is('{ext_label}')").nth(0)
+                ext_value_locator = ext_locator.locator("xpath=following-sibling::div[1]")
+                ext_value = await ext_value_locator.inner_text(timeout=3000)
+                data['extension_date'] = ext_value.strip()
+            except Exception:
+                data['extension_date'] = None  # Not present for all
+
+             # ✅ Extract Project Status (separate DOM structure)
+            try:
+                status_label = page.locator("span:text-is('Project Status')").first
+                status_value = await status_label.locator("xpath=../../following-sibling::div[1]//span").inner_text(timeout=3000)
+                data['project_status'] = status_value.strip()
+            except Exception:
+                data['project_status'] = None  # Missing or unexpected structure
+
+            self.logger.info(f"Extracted Project Details: {data}")
             return data
+
         except Exception as e:
-            self.logger.warning(f"Could not extract Project Details Block: {e}")
+            self.logger.warning(f"❌ Could not extract Project Details Block: {e}")
             return {}
+
+
+
+
+
+    async def _extract_planning_authority_block(self, page: Page) -> Dict[str, Optional[str]]:
+    
+        """
+        Extracts the Planning Authority details from the page.
+
+        This function locates each label by its text and finds the corresponding value
+        in the immediately following sibling element, making it robust against
+        changes in the DOM structure.
+        """
+        data = {
+            "planning_authority": None,
+            "full_name_of_planning_authority": None
+        }
+
+        try:
+            # 1. Locate the main container for the entire section.
+            container = page.locator('div.row:has-text("Planning Authority")').first
+            await container.wait_for(timeout=5000)
+
+            # 2. Extract "Planning Authority"
+            # We find the label and then get the text from the <p> tag in its next sibling div.
+            try:
+                label_pa = container.locator('p:has-text("Planning Authority")')
+                # The XPath finds the parent div, then its immediate next sibling div, then the p within it.
+                value_pa_locator = label_pa.locator("xpath=./ancestor::div[contains(@class, 'col-12')]/following-sibling::div[1]/p")
+                value_pa = await value_pa_locator.inner_text()
+                data["planning_authority"] = value_pa.strip() if value_pa else None
+            except Exception:
+                logger.warning("Could not extract 'Planning Authority' value.")
+
+            # 3. Extract "Full Name of the Planning Authority"
+            try:
+                label_fn = container.locator('p:has-text("Full Name of the Planning Authority")')
+                value_fn_locator = label_fn.locator("xpath=./ancestor::div[contains(@class, 'col-12')]/following-sibling::div[1]/p")
+                value_fn = await value_fn_locator.inner_text()
+                data["full_name_of_planning_authority"] = value_fn.strip() if value_fn else None
+            except Exception:
+                logger.warning("Could not extract 'Full Name of the Planning Authority' value.")
+
+            return data
+
+        except Exception as e:
+            logger.error(f"❌ Could not find or process the Planning Authority block: {e}")
+            return data
+
+
+
 
     async def _extract_planning_land_block(self, page: Page) -> Dict[str, Optional[str]]:
         data = {}
         try:
             field_map = {
-                'planning_authority': "Planning Authority",
-                'full_name_planning_authority': "Full Name of the Planning Authority",
                 'final_plot_bearing': "Final Plot bearing No/CTS Number/Survey Number",
                 'total_land_area': "Total Land Area of Approved Layout (Sq. Mts.)",
                 'land_area_applied': "Land Area for Project Applied for this Registration (Sq. Mts)",
@@ -97,44 +187,77 @@ class DataExtracter:
                 'aggregate_open_space': "Aggregate area(in sq. mts) of recreational open space as per Layout / DP Remarks"
             }
 
-            for key, label in field_map.items():
-                try:
-                    selector = f"label.form-label:has-text('{label}') + input.form-control, label.form-label:has-text('{label}') + textarea.form-control"
-                    locator = page.locator(selector).first
-                    await locator.wait_for(timeout=5000)
-                    value = await locator.evaluate("el => el.value")
-                    data[key] = value.strip() if value else None
-                except Exception as e:
-                    self.logger.warning(f"Failed to extract '{label}' in Planning/Land Block: {e}")
+            # Step 1: Find the correct `.form-card` that contains the target heading
+            section_card = page.locator("div.card-header:has-text('Land Area & Address Details')").first
+            form_card = section_card.locator("xpath=ancestor::div[contains(@class, 'form-card')]").first
+
+            await form_card.wait_for(timeout=5000)
+
+            # Step 2: Iterate through the white-boxes inside the section
+            white_boxes = form_card.locator("div.white-box")
+            count = await white_boxes.count()
+
+            for key, expected_label in field_map.items():
+                found = False
+                for i in range(count):
+                    box = white_boxes.nth(i)
+                    try:
+                        label = await box.locator("label").inner_text()
+                        if expected_label.strip() in label.strip():
+                            value_div = box.locator("div.text-font.f-w-700")
+                            await value_div.wait_for(timeout=2000)
+                            value = await value_div.inner_text()
+                            data[key] = value.strip()
+                            found = True
+                            break
+                    except Exception:
+                        continue
+                if not found:
                     data[key] = None
+                    self.logger.warning(f"⚠️ Label '{expected_label}' not found in Planning/Land block.")
 
             return data
 
         except Exception as e:
-            self.logger.warning(f"Could not extract Planning/Land Block at all: {e}")
+            self.logger.warning(f"❌ Could not extract Planning/Land Block at all: {e}")
             return {}
 
-    # async def _extract_commencement_certificate(self, page: Page) -> Dict[str, str]:
-    #     try:
-    #         table_locator = page.locator("//table[contains(@class,'table-bordered') and contains(@class,'table-striped')]")
-    #         headers = await table_locator.locator("thead tr th").all_inner_texts()
-    #         rows = await table_locator.locator("tbody tr").all()
 
-    #         col1_values, col3_values = [], []
-    #         for row in rows:
-    #             col1 = await row.locator("td:nth-child(1)").inner_text()
-    #             col3 = await row.locator("td:nth-child(3)").inner_text()
-    #             col1_values.append(col1.strip())
-    #             col3_values.append(col3.strip())
 
-    #         return {
-    #             headers[0].strip(): ', '.join(filter(None, col1_values)),
-    #             headers[2].strip(): ', '.join(filter(None, col3_values))
-    #         }
+    async def _extract_commencement_certificate(self, page: Page) -> Dict[str, str]:
+        data = {"CC/NA Order Issued to": "", "CC/NA Order in the name of": ""}
+        try:
+            table_selector = (
+                'div.card:has(div.card-header:has-text("Commencement Certificate")) '
+                'table.table-bordered.table-striped'
+            )
+            table = page.locator(table_selector)
+            await table.wait_for(timeout=5000)
 
-    #     except Exception as e:
-    #         self.logger.warning(f"Could not extract Commencement Certificate details: {e}")
-    #         return {}
+            rows = table.locator("tbody tr")
+            count = await rows.count()
+            if count == 0 or "No-Data-Found" in await rows.first.inner_text():
+                self.logger.info("No Commencement Certificate data found in the table.")
+                return data
+
+            col2_values, col3_values = [], []
+            for i in range(count):
+                row = rows.nth(i)
+                try:
+                    col2_values.append((await row.locator("td:nth-child(2)").inner_text()).strip())
+                    col3_values.append((await row.locator("td:nth-child(3)").inner_text()).strip())
+                except Exception as e:
+                    self.logger.warning(f"Could not process a row in Commencement Certificate table: {e}")
+                    continue
+
+            data["CC/NA Order Issued to"] = ", ".join(col2_values)
+            data["CC/NA Order in the name of"] = ", ".join(col3_values)
+            return data
+
+        except Exception as e:
+            self.logger.warning(f"Could not extract Commencement Certificate details: {e}")
+            return data
+
 
     async def _extract_project_address(self, page: Page) -> Dict[str, str]:
         """
@@ -170,38 +293,50 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract Project Address: {e}")
             return {"project_address_full": None}
 
-     
-
-
     async def _extract_promoter_details(self, page: Page) -> Dict[str, str]:
         """
-        Extracts 'Promoter Type' and 'Name of Partnership' as two separate fields.
+        Dynamically extracts all promoter details and combines them into a
+        single comma-separated string.
+        
+        Returns a dictionary with a single key 'Promoter Details'.
+        Example: {'Promoter Details': 'Promoter Type-Partnership, Name of Partnership-GREEN SPACE INFRA VENTURES'}
         """
+        # This list will store each "label-value" pair as a string
+        details_list = []
+
         try:
-            # Wait for 'Promoter Type' label to ensure form is loaded
-            await page.locator("label:has-text('Promoter Type')").wait_for(timeout=10000)
+            # Step 1: Find the main container card for "Promoter Details"
+            container_div = page.locator(
+                "//span/b[contains(text(), 'Promoter Details')]/ancestor::div[contains(@class, 'card')]"
+            ).first
+            await container_div.wait_for(timeout=5000)
 
-            # PROMOTER TYPE: Inside fieldset
-            promoter_type_label = page.locator("label:has-text('Promoter Type')")
-            promoter_type_input = promoter_type_label.locator("xpath=following-sibling::input[1]").first
-            promoter_type_value = await promoter_type_input.input_value()
+            # Step 2: Find all <fieldset> elements within the container
+            fieldsets = container_div.locator("fieldset")
+            count = await fieldsets.count()
 
-            # NAME OF PARTNERSHIP: Outside fieldset, regular layout
-            name_partnership_label = page.locator("label:has-text('Name of Partnership')")
-            name_partnership_input = name_partnership_label.locator("xpath=following-sibling::input[1]").first
-            name_partnership_value = await name_partnership_input.input_value()
+            # Step 3: Loop through each fieldset
+            for i in range(count):
+                fieldset = fieldsets.nth(i)
+                try:
+                    # Extract the label (key) and input (value)
+                    key = (await fieldset.locator("label").inner_text()).strip()
+                    value = (await fieldset.locator("input").input_value()).strip()
 
-            return {
-                "promoter_type": promoter_type_value.strip(),
-                "name_of_partnership": name_partnership_value.strip()
-            }
+                    # Format the text as "key-value" and add it to our list
+                    if key and value:
+                        details_list.append(f"{key}-{value}")
+                
+                except Exception as e:
+                    logger.warning(f"Could not process a fieldset within Promoter Details: {e}")
 
         except Exception as e:
-            self.logger.warning(f"❌ Could not extract promoter details: {e}")
-            return {
-                "promoter_type": None,
-                "name_of_partnership": None
-            }
+            logger.warning(f"❌ Could not extract promoter details container: {e}")
+
+        # Step 4: Join the list into a single string and return in the final format
+        return {
+            "promoter_detail": ", ".join(details_list)
+        }
 
     async def _extract_promoter_address(self, page: Page) -> Dict[str, str]:
         try:

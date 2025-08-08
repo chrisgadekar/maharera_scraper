@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Any
 import logging
 from playwright.async_api import Page, expect
 
+
 logger = logging.getLogger(__name__)
 
 class DataExtracter:
@@ -21,10 +22,10 @@ class DataExtracter:
                 self._extract_project_details_block(page),
                 self._extract_planning_authority_block(page),
                 self._extract_planning_land_block(page),
-                # self._extract_commencement_certificate(page),
-                # self._extract_project_address(page),
-                # self._extract_promoter_details(page),
-                # self._extract_promoter_address(page),
+                self._extract_commencement_certificate(page),
+                self._extract_project_address(page),
+                self._extract_promoter_details(page),
+                self._extract_promoter_address(page),
                 # self._extract_partner_details(page),
                 # self._extract_promoter_past_experience(page),
                 # self._extract_authorised_signatory(page),
@@ -79,8 +80,6 @@ class DataExtracter:
             return {}
 
 
-
-
     async def _extract_project_details_block(self, page: Page) -> Dict[str, str]:
         data = {}
 
@@ -124,17 +123,13 @@ class DataExtracter:
             return {}
 
 
-
-
-
     async def _extract_planning_authority_block(self, page: Page) -> Dict[str, Optional[str]]:
-    
         """
         Extracts the Planning Authority details from the page.
-
-        This function locates each label by its text and finds the corresponding value
-        in the immediately following sibling element, making it robust against
-        changes in the DOM structure.
+        
+        Based on the HTML structure:
+        - Headers are in span elements with text "Planning Authority" and "Full Name of the Planning Authority"
+        - Values are in sibling div elements next to the parent div of the span
         """
         data = {
             "planning_authority": None,
@@ -142,37 +137,37 @@ class DataExtracter:
         }
 
         try:
-            # 1. Locate the main container for the entire section.
+            # 1. Locate the main container for the entire section
             container = page.locator('div.row:has-text("Planning Authority")').first
             await container.wait_for(timeout=5000)
 
-            # 2. Extract "Planning Authority"
-            # We find the label and then get the text from the <p> tag in its next sibling div.
+            # 2. Extract "Planning Authority" value
             try:
-                label_pa = container.locator('p:has-text("Planning Authority")')
-                # The XPath finds the parent div, then its immediate next sibling div, then the p within it.
-                value_pa_locator = label_pa.locator("xpath=./ancestor::div[contains(@class, 'col-12')]/following-sibling::div[1]/p")
+                # Find span with "Planning Authority" text
+                label_pa = container.locator('span:has-text("Planning Authority")')
+                # Get the parent div of the span, then its next sibling div, then the first p within it
+                value_pa_locator = label_pa.locator("xpath=./ancestor::div[contains(@class, 'col-12 text-font')]/following-sibling::div[1]/p").first
                 value_pa = await value_pa_locator.inner_text()
                 data["planning_authority"] = value_pa.strip() if value_pa else None
-            except Exception:
-                logger.warning("Could not extract 'Planning Authority' value.")
+            except Exception as e:
+                self.logger.warning(f"Could not extract 'Planning Authority' value: {e}")
 
-            # 3. Extract "Full Name of the Planning Authority"
+            # 3. Extract "Full Name of the Planning Authority" value
             try:
-                label_fn = container.locator('p:has-text("Full Name of the Planning Authority")')
-                value_fn_locator = label_fn.locator("xpath=./ancestor::div[contains(@class, 'col-12')]/following-sibling::div[1]/p")
+                # Find span with "Full Name of the Planning Authority" text
+                label_fn = container.locator('span:has-text("Full Name of the Planning Authority")')
+                # Get the parent div of the span, then its next sibling div, then the first p within it
+                value_fn_locator = label_fn.locator("xpath=./ancestor::div[contains(@class, 'col-12 text-font')]/following-sibling::div[1]/p").first
                 value_fn = await value_fn_locator.inner_text()
                 data["full_name_of_planning_authority"] = value_fn.strip() if value_fn else None
-            except Exception:
-                logger.warning("Could not extract 'Full Name of the Planning Authority' value.")
+            except Exception as e:
+                self.logger.warning(f"Could not extract 'Full Name of the Planning Authority' value: {e}")
 
             return data
 
         except Exception as e:
-            logger.error(f"❌ Could not find or process the Planning Authority block: {e}")
+            self.logger.error(f"❌ Could not find or process the Planning Authority block: {e}")
             return data
-
-
 
 
     async def _extract_planning_land_block(self, page: Page) -> Dict[str, Optional[str]]:
@@ -222,21 +217,27 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract Planning/Land Block at all: {e}")
             return {}
 
-
-
     async def _extract_commencement_certificate(self, page: Page) -> Dict[str, str]:
-        data = {"CC/NA Order Issued to": "", "CC/NA Order in the name of": ""}
+        data = {
+            "CC/NA Order Issued to": "",
+            "CC/NA Order in the name of": ""
+        }
         try:
-            table_selector = (
-                'div.card:has(div.card-header:has-text("Commencement Certificate")) '
-                'table.table-bordered.table-striped'
+            # Locate the section by its heading text
+            section = page.locator(
+                "div:has(h5.card-title.mb-0:has-text('Commencement Certificate / NA Order Documents Details'))"
             )
-            table = page.locator(table_selector)
+            
+            divOfTable=section.locator("xpath=following-sibling::div[1]");
+            # From that section, find the table
+            table = divOfTable.locator("table:has-text('CC/NA Order Issued to')")
             await table.wait_for(timeout=5000)
 
+            # Get table rows
             rows = table.locator("tbody tr")
             count = await rows.count()
-            if count == 0 or "No-Data-Found" in await rows.first.inner_text():
+
+            if count == 0 or "No-Data-Found" in (await rows.first.inner_text()):
                 self.logger.info("No Commencement Certificate data found in the table.")
                 return data
 
@@ -244,8 +245,10 @@ class DataExtracter:
             for i in range(count):
                 row = rows.nth(i)
                 try:
-                    col2_values.append((await row.locator("td:nth-child(2)").inner_text()).strip())
-                    col3_values.append((await row.locator("td:nth-child(3)").inner_text()).strip())
+                    col2 = await row.locator("td:nth-child(2)").inner_text()
+                    col3 = await row.locator("td:nth-child(3)").inner_text()
+                    col2_values.append(col2.strip())
+                    col3_values.append(col3.strip())
                 except Exception as e:
                     self.logger.warning(f"Could not process a row in Commencement Certificate table: {e}")
                     continue
@@ -258,147 +261,211 @@ class DataExtracter:
             self.logger.warning(f"Could not extract Commencement Certificate details: {e}")
             return data
 
-
     async def _extract_project_address(self, page: Page) -> Dict[str, str]:
         """
-        Extracts exactly 12 address fields under 'Project Address Details' using robust label-based scoping.
-        Returns them as one comma-separated value string.
+        Extracts State/UT, District, Taluka, Village, and Pin Code from the 
+        'Project Address Details' section, with keys prefixed by project_address_.
         """
         try:
-            labels_in_order = [
-                "Address", "State/UT", "District", "Taluka", "Village", "Pin Code",
-                "Boundaries East", "Boundaries West", "Boundaries South",
-                "Boundaries North", "Longitude", "Latitude"
-            ]
+            target_labels = ["State/UT", "District", "Taluka", "Village", "Pin Code"]
 
             # Anchor to the Project Address Details section
             header = page.locator("h5.card-title:has-text('Project Address Details')")
             await header.wait_for(timeout=10000)
-            section = header.locator("xpath=ancestor::fieldset")
+            section = header.locator("xpath=ancestor::div[contains(@class, 'white-box')]")
 
-            address_parts = []
-            for label in labels_in_order:
+            results = {}
+            for label in target_labels:
                 label_locator = section.locator(f"label.form-label:has-text('{label}')")
-                input_locator = label_locator.locator("xpath=following-sibling::input[1]").first  # <== Fix here
+                value_locator = label_locator.locator("xpath=following-sibling::*[1]")  # First sibling div
+                child_div_locator = value_locator.locator("div")
 
-                await input_locator.wait_for(timeout=5000)
-                value = await input_locator.input_value()
-                address_parts.append(value.strip() if value else "")
+                await child_div_locator.wait_for(timeout=5000)
+                value_text = (await child_div_locator.text_content() or "").strip()
 
-            return {
-                "project_address_full": ", ".join(filter(None, address_parts))
-            }
+                key_name = f"project_address_{label.lower().replace('/', '_').replace(' ', '_')}"
+                results[key_name] = value_text
+
+            return results
 
         except Exception as e:
-            self.logger.warning(f"❌ Could not extract Project Address: {e}")
-            return {"project_address_full": None}
+            self.logger.warning(f"❌ Could not extract location fields: {e}")
+            return {
+                f"project_address_{lbl.lower().replace('/', '_').replace(' ', '_')}": None
+                for lbl in target_labels
+            }
 
     async def _extract_promoter_details(self, page: Page) -> Dict[str, str]:
         """
-        Dynamically extracts all promoter details and combines them into a
-        single comma-separated string.
-        
-        Returns a dictionary with a single key 'Promoter Details'.
-        Example: {'Promoter Details': 'Promoter Type-Partnership, Name of Partnership-GREEN SPACE INFRA VENTURES'}
+        Extracts all promoter details from the 'Promoter Details' section and
+        returns them as a single comma-joined string under 'promoter_details'.
         """
-        # This list will store each "label-value" pair as a string
-        details_list = []
-
         try:
-            # Step 1: Find the main container card for "Promoter Details"
-            container_div = page.locator(
-                "//span/b[contains(text(), 'Promoter Details')]/ancestor::div[contains(@class, 'card')]"
-            ).first
-            await container_div.wait_for(timeout=5000)
+            header = page.locator("h5.card-title:has-text('Promoter Details')").first
+            await header.wait_for(timeout=10000)
 
-            # Step 2: Find all <fieldset> elements within the container
-            fieldsets = container_div.locator("fieldset")
-            count = await fieldsets.count()
+            # Prefer the nearest fieldset (most specific container for this card/section)
+            section = header.locator("xpath=ancestor::fieldset[1]")
+            await section.wait_for(timeout=5000)
 
-            # Step 3: Loop through each fieldset
-            for i in range(count):
-                fieldset = fieldsets.nth(i)
-                try:
-                    # Extract the label (key) and input (value)
-                    key = (await fieldset.locator("label").inner_text()).strip()
-                    value = (await fieldset.locator("input").input_value()).strip()
+            # Only rows inside the scoped section
+            # Get the first big row containing promoter info
+            outer_row = section.locator("xpath=.//div[contains(@class,'row')][.//label]").first
 
-                    # Format the text as "key-value" and add it to our list
-                    if key and value:
-                        details_list.append(f"{key}-{value}")
+            # Get each col inside the outer row that has a label
+            cols = outer_row.locator("xpath=.//div[contains(@class,'col')][.//label]")
+
+            total_cols = await cols.count()
+            details = []
+
+            for i in range(total_cols):
+                col = cols.nth(i)
+                label_loc = col.locator("label")
+                if await label_loc.count() == 0:
+                    continue
+                label_text = (await label_loc.first.text_content() or "").strip().rstrip(":")
                 
-                except Exception as e:
-                    logger.warning(f"Could not process a fieldset within Promoter Details: {e}")
+                # Find value div/span inside same col
+               # Find value div/span inside same col
+                value_loc = col.locator("xpath=.//*[self::div or self::span][normalize-space(string(.))!=''][1]")
+
+                # Get the raw text, which includes the duplicated label
+                raw_value_text = (await value_loc.first.text_content() or "").strip() if await value_loc.count() > 0 else ""
+
+                # THE FIX: Remove the label text from the raw text to get the clean value
+                value_text = raw_value_text.replace(label_text, "").strip()
+                
+                if label_text and value_text:
+                    details.append(f"{label_text} - {value_text}")
+
+            promoter_details_str = ", ".join(details) if details else None
+
+            return {"promoter_details": promoter_details_str}
 
         except Exception as e:
-            logger.warning(f"❌ Could not extract promoter details container: {e}")
-
-        # Step 4: Join the list into a single string and return in the final format
-        return {
-            "promoter_detail": ", ".join(details_list)
-        }
+            self.logger.warning(f"❌ Could not extract Promoter Details: {e}")
+            return {"promoter_details": None}
 
     async def _extract_promoter_address(self, page: Page) -> Dict[str, str]:
+        """
+        Extracts specific address fields from the 'Promoter Official Communication Address' section.
+        """
+        address_details = {}
         try:
-            # Selector to the block containing all address inputs
-            container = page.locator("project-communication-address-preview fieldset form div.row")
+            # Use the h5 title as a reliable anchor to find the correct section
+            header = page.locator("h5:has-text('Promoter Official Communication Address')")
+            
+            # Navigate from the header to the ancestor <fieldset> which contains the form
+            section = header.locator("xpath=ancestor::fieldset[1]")
+            await section.wait_for(timeout=5000)
 
-            # Select all input elements inside the nested divs
-            input_elements = container.locator("div > label + input")
+            # Define the exact labels you want to scrape
+            fields_to_extract = ['State/UT', 'District', 'Taluka', 'Village', 'Pin Code']
 
-            count = await input_elements.count()
-            values = []
+            for field in fields_to_extract:
+                # Find the label element that contains the text for the current field
+                label_locator = section.locator(f"label:has-text('{field}')")
+                value_text = None
 
-            for i in range(count):
-                value = await input_elements.nth(i).evaluate("el => el.value")
-                values.append(value.strip() if value else '')
+                if await label_locator.count() > 0:
+                    # Based on your screenshot, the value is in a div nested inside the label's sibling div.
+                    # Structure: <label>...</label> <div> <div>VALUE</div> </div>
+                    value_locator = label_locator.locator("xpath=./following-sibling::div/div")
+                    
+                    if await value_locator.count() > 0:
+                        value_text = (await value_locator.first.text_content() or "").strip()
 
-            return {
-                'promoter_official_address': ', '.join(values)
-            }
+                # Create a clean key for the dictionary (e.g., "State/UT" -> "state_ut")
+                key_suffix = re.sub(r'[^a-z0-9_]', '', field.lower().replace(' ', '_').replace('/', '_'))
+                dict_key = f"promoter_official_communication_address_{key_suffix}"
+                address_details[dict_key] = value_text
+
+            return address_details
 
         except Exception as e:
             self.logger.warning(f"❌ Could not extract Promoter Address details: {e}")
-            return {'promoter_official_address': None}
+            # On error, return a dictionary with None values to maintain a consistent data structure
+            fields_to_extract = ['State/UT', 'District', 'Taluka', 'Village', 'Pin Code']
+            return {
+                f"promoter_official_communication_address_{re.sub(r'[^a-z0-9_]', '', field.lower().replace(' ', '_').replace('/', '_'))}": None
+                for field in fields_to_extract
+            }
+
+    async def _switch_to_tab(self, page: Page, tab_name: str):
+        """
+        Clicks a specific tab button by its visible text and waits for the
+        first table row under that tab to appear.
+        """
+        try:
+            # Locate the tab button by visible text
+            button = page.locator(f"div.tabs button:has-text('{tab_name}')")
+            if await button.count() == 0:
+                raise ValueError(f"No tab button found with name '{tab_name}'")
+
+            await button.first.click()
+
+            # Wait for a table row to appear — more reliable than networkidle
+            await page.locator("table tbody tr td").first.wait_for(timeout=7000)
+
+        except Exception as e:
+            self.logger.error(f"Failed to switch to or load tab '{tab_name}': {e}")
+            raise
 
 
     async def _extract_partner_details(self, page: Page) -> Dict[str, Any]:
-        """Extract partner details as comma-separated name and designation lists."""
-        try:
-            # Locate the personnel modal preview section directly
-            personnel_section = page.locator("project-personnel-modal-preview fieldset form")
+        """
+        Clicks the first visible tab in the tabs container and scrapes the
+        'Name' and 'Designation' columns from the resulting table.
+        """
+        default_return = {'partner_name': None, 'partner_designation': None}
 
-            # Make sure the table is there
-            table = personnel_section.locator("table.table.table-bordered.table-striped")
-            await table.wait_for(timeout=5000)
+        try:
+            # Get the first tab button inside the container
+            first_button = page.locator("div.tabs button").first
+            if await first_button.count() == 0:
+                self.logger.warning("No partner/director tab button found.")
+                return default_return
+
+            tab_name = (await first_button.text_content() or "").strip()
+            if not tab_name:
+                self.logger.warning("First tab button has no text.")
+                return default_return
+
+            # Switch to that tab and wait for table
+            await self._switch_to_tab(page, tab_name)
+
+            # Locate the table inside the content panel
+            table = page.locator("project-personnel-modal-preview table")
+            if await table.count() == 0:
+                self.logger.info(f"No table found under tab '{tab_name}'.")
+                return default_return
 
             rows = table.locator("tbody tr")
+            row_count = await rows.count()
+            if row_count == 0:
+                return default_return
 
-            name_list = []
-            designation_list = []
-
-            count = await rows.count()
-            for i in range(count):
+            # Extract names and designations
+            name_list, designation_list = [], []
+            for i in range(row_count):
                 row = rows.nth(i)
-                cols = row.locator("td")
+                name_text = (await row.locator("td").nth(1).text_content() or "").strip()
+                designation_text = (await row.locator("td").nth(2).text_content() or "").strip()
 
-                name = await cols.nth(1).inner_text()
-                designation = await cols.nth(2).inner_text()
-
-                name_list.append(name.strip())
-                designation_list.append(designation.strip())
+                if name_text:
+                    name_list.append(name_text)
+                if designation_text:
+                    designation_list.append(designation_text)
 
             return {
-                'partner_details': {
-                    'names': ', '.join(name_list),
-                    'designations': ', '.join(designation_list)
-                }
+                'partner_name': ', '.join(name_list) if name_list else None,
+                'partner_designation': ', '.join(designation_list) if designation_list else None
             }
 
         except Exception as e:
-            self.logger.warning(f"❌ Could not extract Partner Details: {e}")
-            return {'partner_details': None}
-        
+            self.logger.warning(f"❌ Could not extract Partner/Director Details: {e}")
+            return default_return
+    
 
     async def _extract_promoter_past_experience(self, page: Page) -> Dict[str, Any]:
         """Extract promoter past experience: Name, Project Status, Litigation Status"""

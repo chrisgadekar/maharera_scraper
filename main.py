@@ -140,8 +140,8 @@ async def process_url(page, captcha_solver, data_extracter, project_id, view_lin
 
 async def main():
     # --- Dynamic range config ---
-    START_ID = 3
-    END_ID = 3
+    START_ID = 1
+    END_ID = 20
     BASE_URL = "https://maharerait.maharashtra.gov.in/public/project/view/"
 
     # Resume capability

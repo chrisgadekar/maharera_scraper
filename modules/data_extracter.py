@@ -31,8 +31,15 @@ class DataExtracter:
                 # self._extract_authorised_signatory(page),
 
                 self._extract_latest_form_dates(page),
+                 self._extract_investor_flag(page),
+                self._extract_litigation_details(page),
                 self._extract_building_details(page),
                 self._extract_apartment_summary(page),
+               
+                self._extract_parking_details(page),
+                self._extract_bank_details(page),
+                self._extract_complaint_details(page),
+                self._extract_real_estate_agents(page)
 
 
 
@@ -739,257 +746,7 @@ class DataExtracter:
             self.logger.error(f"Building Details extract nahi kar paaye: {e}")
             return {key: None for key in header_key_map.values()}
 
-
-    # async def _extract_apartment_summary(self, page: Page) -> Dict[str, Any]:
-    #     """
-    #     Extracts data from the 'Summary of Apartments/Units' table.
-    #     This function can handle two different versions of the table.
-    #     """
-    #     self.logger.info("Summary of Apartments/Units table se data extract kar rahe hain...")
-
-    #     # Define all 15 possible keys. They will be populated based on the table found.
-    #     all_keys = {
-    #         "summary_identification_building_wing": None,
-    #         "summary_identification_wing_plan": None,
-    #         "summary_floor_type": None,
-    #         "summary_total_no_of_residential_apartments": None,
-    #         "summary_total_no_of_non_residential_apartments": None,
-    #         "summary_total_no_of_apartments_nr_r": None,
-    #         "summary_total_no_of_sold_units": None,
-    #         "summary_total_no_of_booked_units": None,
-    #         "summary_total_no_of_rehab_units": None,
-    #         "summary_total_no_of_mortgage": None,
-    #         "summary_total_no_of_reservation": None,
-    #         "summary_total_no_of_land_owner_investor_share_sale": None,
-    #         "summary_total_no_of_land_owner_investor_share": None,
-    #         "summary_view": None,
-    #         "total_no_of_apartments": None, # For the simple table
-    #     }
-
-    #     try:
-    #         # Locate the container for the summary section
-    #         self.logger.info("Apartment summary section ke container ko dhoond rahe hain...")
-    #         container = page.locator("div.white-box:has(b:has-text('Summary of Apartments/Units'))")
-    #         await container.wait_for(timeout=7000)
-    #         self.logger.info("Container mil gaya. Table dhoond rahe hain...")
-    #         table = container.locator("table")
-    #         await table.wait_for(timeout=5000)
-    #         self.logger.info("Table mil gayi.")
-
-    #         header_elements = await table.locator("thead th").all()
-    #         header_count = len(header_elements)
-    #         self.logger.info(f"Table mein {header_count} columns mile.")
-
-    #         # --- Logic to handle the DETAILED table (15 columns) ---
-    #         if header_count > 10:
-    #             self.logger.info("Detailed apartment summary table (15 columns) mili.")
-                
-    #             header_map = {
-    #                 "Identification of Building/ Wing as per Sanctioned Plan": "summary_identification_building_wing",
-    #                 "Identification of Wing as per Sanctioned Plan": "summary_identification_wing_plan",
-    #                 "Floor Type": "summary_floor_type",
-    #                 "Total No. Of Residential Apartments/ Units": "summary_total_no_of_residential_apartments",
-    #                 "Total No. Of Non-Residential Apartments/ Units": "summary_total_no_of_non_residential_apartments",
-    #                 "Total No. Of Apartments / Unit (NR+R)": "summary_total_no_of_apartments_nr_r",
-    #                 "Total No. of Sold Units": "summary_total_no_of_sold_units",
-    #                 "Total No. of Booked Units": "summary_total_no_of_booked_units",
-    #                 "Total No. of Rehab Units": "summary_total_no_of_rehab_units",
-    #                 "Total No. of Mortgage": "summary_total_no_of_mortgage",
-    #                 "Total No. of Reservation": "summary_total_no_of_reservation",
-    #                 "Total No. of Land Owner/ Investor Share (For Sale)": "summary_total_no_of_land_owner_investor_share_sale",
-    #                 "Total No. of Land Owner/ Investor Share": "summary_total_no_of_land_owner_investor_share",
-    #                 "View": "summary_view",
-    #             }
-
-    #             temp_data = {key: [] for key in header_map.values()}
-    #             actual_headers = [(await h.text_content() or "").strip() for h in header_elements if (await h.text_content() or "").strip() != '#']
-    #             self.logger.info(f"Actual Headers found: {actual_headers}")
-                
-    #             rows = await table.locator("tbody tr").all()
-    #             self.logger.info(f"Table mein {len(rows)} rows mili.")
-    #             for i, row in enumerate(rows):
-    #                 row_text = (await row.text_content() or "").strip()
-    #                 if "Total" in row_text:
-    #                     self.logger.info(f"Row {i+1} ko ignore kar rahe hain (Total row).")
-    #                     continue
-                    
-    #                 self.logger.info(f"Row {i+1} ko process kar rahe hain: {row_text[:100]}")
-    #                 cells = await row.locator("td").all()
-    #                 row_cells = cells[1:]
-
-    #                 for j, header_text in enumerate(actual_headers):
-    #                     if j < len(row_cells):
-    #                         cell = row_cells[j]
-    #                         dict_key = header_map.get(header_text)
-    #                         if dict_key:
-    #                             cell_content = (await cell.text_content() or "").strip()
-    #                             self.logger.debug(f"  - Header '{header_text}' -> Key '{dict_key}': Value '{cell_content}'")
-    #                             temp_data[dict_key].append(cell_content)
-                
-    #             for key, values in temp_data.items():
-    #                 all_keys[key] = ", ".join(values)
-
-    #         # --- Logic to handle the SIMPLE table (5 columns) ---
-    #         elif header_count > 3:
-    #             self.logger.info("Simple apartment summary table (5 columns) mili.")
-    #             total_apartments = 0
-    #             rows = await table.locator("tbody tr").all()
-    #             self.logger.info(f"Table mein {len(rows)} rows mili.")
-    #             for i, row in enumerate(rows):
-    #                 cells = await row.locator("td").all()
-    #                 if len(cells) == 5:
-    #                     try:
-    #                         # 5th column (index 4) has the number
-    #                         num_text = (await cells[4].text_content() or "0").strip()
-    #                         self.logger.debug(f"Row {i+1}, 5th column se value mili: '{num_text}'")
-    #                         total_apartments += int(num_text)
-    #                     except (ValueError, IndexError) as e:
-    #                         self.logger.warning(f"Row {i+1} mein number parse nahi kar paaye: {e}")
-    #                         continue # Ignore rows that don't have a valid number
-                
-    #             self.logger.info(f"Total apartments calculate kiye gaye: {total_apartments}")
-    #             all_keys["total_no_of_apartments"] = str(total_apartments)
-
-    #         else:
-    #             self.logger.warning("Apartment summary table ka format anjaan hai.")
-
-    #         self.logger.info(f"Successfully extracted Apartment Summary: {all_keys}")
-    #         return all_keys
-
-    #     except Exception as e:
-    #         self.logger.error(f"Apartment Summary extract nahi kar paaye: {e}")
-    #         return all_keys # Return the dictionary with None values on error
-
-
-    # async def _extract_apartment_summary(self, page: Page) -> Dict[str, Any]:
-    #     """
-    #     Extracts data from the 'Summary of Apartments/Units' table.
-    #     This function can handle two different versions of the table.
-    #     """
-    #     self.logger.info("Summary of Apartments/Units table se data extract kar rahe hain...")
-
-    #     # Define all possible keys. They will be populated based on the table found.
-    #     all_keys = {
-    #         "summary_identification_building_wing": None,
-    #         "summary_identification_wing_plan": None,
-    #         "summary_floor_type": None,
-    #         "summary_total_no_of_residential_apartments": None,
-    #         "summary_total_no_of_non_residential_apartments": None,
-    #         "summary_total_no_of_apartments_nr_r": None,
-    #         "summary_total_no_of_sold_units": None,
-    #         "summary_total_no_of_unsold_units": None, # Added
-    #         "summary_total_no_of_booked": None, # Changed
-    #         "summary_total_no_of_rehab_units": None,
-    #         "summary_total_no_of_mortgage": None,
-    #         "summary_total_no_of_reservation": None,
-    #         "summary_total_no_of_land_owner_investor_share_sale": None,
-    #         "summary_total_no_of_land_owner_investor_share_not_for_sale": None, # Added
-    #         "summary_view": None,
-    #         "total_no_of_apartments": None, # For the simple table
-    #     }
-
-    #     try:
-    #         # Locate the container for the summary section
-    #         self.logger.info("Apartment summary section ke container ko dhoond rahe hain...")
-    #         container = page.locator("div.white-box:has(b:has-text('Summary of Apartments/Units'))")
-    #         await container.wait_for(timeout=7000)
-    #         self.logger.info("Container mil gaya. Table dhoond rahe hain...")
-    #         table = container.locator("table")
-    #         await table.wait_for(timeout=5000)
-    #         self.logger.info("Table mil gayi.")
-
-    #         header_elements = await table.locator("thead th").all()
-    #         header_count = len(header_elements)
-    #         self.logger.info(f"Table mein {header_count} columns mile.")
-
-    #         # --- Logic to handle the DETAILED table (15 columns) ---
-    #         if header_count > 10:
-    #             self.logger.info("Detailed apartment summary table (15 columns) mili.")
-                
-    #             # --- THE FIX ---
-    #             # Updated the header map to exactly match the headers from the logs
-    #             header_map = {
-    #                 "Identification of Building/ Wing as per Sanctioned Plan": "summary_identification_building_wing",
-    #                 "Identification of Wing as per Sanctioned Plan": "summary_identification_wing_plan",
-    #                 "Floor Type": "summary_floor_type",
-    #                 "Total No. Of Residential Apartments/ Units": "summary_total_no_of_residential_apartments",
-    #                 "Total No. Of Non-Residential Apartments/ Units": "summary_total_no_of_non_residential_apartments",
-    #                 "Total Apartments / Unit (NR+R)": "summary_total_no_of_apartments_nr_r",
-    #                 "Total No. of Sold Units": "summary_total_no_of_sold_units",
-    #                 "Total No. of Unsold Units": "summary_total_no_of_unsold_units",
-    #                 "Total No. of Booked": "summary_total_no_of_booked",
-    #                 "Total No. of Rehab Units": "summary_total_no_of_rehab_units",
-    #                 "Total No. of Mortgage": "summary_total_no_of_mortgage",
-    #                 "Total No. of Reservation": "summary_total_no_of_reservation",
-    #                 "Total No. of Land Owner/ Investor Share (For Sale)": "summary_total_no_of_land_owner_investor_share_sale",
-    #                 "Total No. of Land Owner/ Investor Share (Not For Sale)": "summary_total_no_of_land_owner_investor_share_not_for_sale",
-    #                 "View": "summary_view",
-    #             }
-    #             # --- END OF FIX ---
-
-    #             temp_data = {key: [] for key in header_map.values()}
-    #             actual_headers = [(await h.text_content() or "").strip() for h in header_elements if (await h.text_content() or "").strip() != '#']
-    #             self.logger.info(f"Actual Headers found: {actual_headers}")
-                
-    #             rows = await table.locator("tbody tr").all()
-    #             self.logger.info(f"Table mein {len(rows)} rows mili.")
-    #             for i, row in enumerate(rows):
-    #                 cells = await row.locator("td").all()
-    #                 if not cells:
-    #                     continue
-                    
-    #                 first_cell_text = (await cells[0].text_content() or "").strip()
-    #                 if first_cell_text == "Total":
-    #                     self.logger.info(f"Row {i+1} ko ignore kar rahe hain (Total row).")
-    #                     continue
-                    
-    #                 self.logger.info(f"Row {i+1} ko process kar rahe hain: {(await row.text_content() or '' )[:100]}")
-    #                 row_cells = cells[1:]
-
-    #                 for j, header_text in enumerate(actual_headers):
-    #                     if j < len(row_cells):
-    #                         cell = row_cells[j]
-    #                         dict_key = header_map.get(header_text)
-    #                         if dict_key:
-    #                             cell_content = (await cell.text_content() or "").strip()
-    #                             self.logger.debug(f"  - Header '{header_text}' -> Key '{dict_key}': Value '{cell_content}'")
-    #                             temp_data[dict_key].append(cell_content)
-                
-    #             for key, values in temp_data.items():
-    #                 all_keys[key] = ", ".join(values)
-
-    #         # --- Logic to handle the SIMPLE table (5 columns) ---
-    #         elif header_count > 3:
-    #             self.logger.info("Simple apartment summary table (5 columns) mili.")
-    #             total_apartments = 0
-    #             rows = await table.locator("tbody tr").all()
-    #             self.logger.info(f"Table mein {len(rows)} rows mili.")
-    #             for i, row in enumerate(rows):
-    #                 cells = await row.locator("td").all()
-    #                 if len(cells) == 5:
-    #                     try:
-    #                         # 5th column (index 4) has the number
-    #                         num_text = (await cells[4].text_content() or "0").strip()
-    #                         self.logger.debug(f"Row {i+1}, 5th column se value mili: '{num_text}'")
-    #                         total_apartments += int(num_text)
-    #                     except (ValueError, IndexError) as e:
-    #                         self.logger.warning(f"Row {i+1} mein number parse nahi kar paaye: {e}")
-    #                         continue # Ignore rows that don't have a valid number
-                
-    #             self.logger.info(f"Total apartments calculate kiye gaye: {total_apartments}")
-    #             all_keys["total_no_of_apartments"] = str(total_apartments)
-
-    #         else:
-    #             self.logger.warning("Apartment summary table ka format anjaan hai.")
-
-    #         self.logger.info(f"Successfully extracted Apartment Summary: {all_keys}")
-    #         return all_keys
-
-    #     except Exception as e:
-    #         self.logger.error(f"Apartment Summary extract nahi kar paaye: {e}")
-    #         return all_keys # Return the dictionary with None values on error
-
-
+    # works fine 
     async def _extract_apartment_summary(self, page: Page) -> Dict[str, Any]:
         """
         Extracts data from the 'Summary of Apartments/Units' table.
@@ -1018,21 +775,21 @@ class DataExtracter:
 
         try:
             # Locate the container for the summary section
-            self.logger.info("Apartment summary section ke container ko dhoond rahe hain...")
+           
             container = page.locator("div.white-box:has(b:has-text('Summary of Apartments/Units'))")
             await container.wait_for(timeout=7000)
-            self.logger.info("Container mil gaya. Table dhoond rahe hain...")
+         
             table = container.locator("table")
             await table.wait_for(timeout=5000)
-            self.logger.info("Table mil gayi.")
+            
 
             header_elements = await table.locator("thead th").all()
             header_count = len(header_elements)
-            self.logger.info(f"Table mein {header_count} columns mile.")
+          
 
             # --- Logic to handle the DETAILED table (15 columns) ---
             if header_count > 10:
-                self.logger.info("Detailed apartment summary table (15 columns) mili.")
+                
                 
                 header_map = {
                     "Identification of Building/ Wing as per Sanctioned Plan": "summary_identification_building_wing",
@@ -1053,10 +810,10 @@ class DataExtracter:
 
                 temp_data = {key: [] for key in header_map.values()}
                 actual_headers = [(await h.text_content() or "").strip() for h in header_elements if (await h.text_content() or "").strip() != '#']
-                self.logger.info(f"Actual Headers found: {actual_headers}")
+                
                 
                 rows = await table.locator("tbody tr").all()
-                self.logger.info(f"Table mein {len(rows)} rows mili.")
+                
                 for i, row in enumerate(rows):
                     cells = await row.locator("td").all()
                     if not cells:
@@ -1064,10 +821,10 @@ class DataExtracter:
                     
                     first_cell_text = (await cells[0].text_content() or "").strip()
                     if first_cell_text == "Total":
-                        self.logger.info(f"Row {i+1} ko ignore kar rahe hain (Total row).")
+                        
                         continue
                     
-                    self.logger.info(f"Row {i+1} ko process kar rahe hain: {(await row.text_content() or '' )[:100]}")
+                   
                     row_cells = cells[1:]
 
                     for j, header_text in enumerate(actual_headers):
@@ -1076,7 +833,7 @@ class DataExtracter:
                             dict_key = header_map.get(header_text)
                             if dict_key:
                                 cell_content = (await cell.text_content() or "").strip()
-                                self.logger.debug(f"  - Header '{header_text}' -> Key '{dict_key}': Value '{cell_content}'")
+                                
                                 temp_data[dict_key].append(cell_content)
                 
                 for key, values in temp_data.items():
@@ -1084,10 +841,10 @@ class DataExtracter:
 
             # --- Logic to handle the SIMPLE table (5 columns) ---
             elif  header_count ==5:
-                self.logger.info("Simple apartment summary table (5 columns) mili.")
+                
                 total_apartments = 0
                 rows = await table.locator("tbody tr").all()
-                self.logger.info(f"Table mein {len(rows)} rows mili.")
+               
                 for i, row in enumerate(rows):
                     cells = await row.locator("td").all()
                     if len(cells) == 5:
@@ -1097,14 +854,14 @@ class DataExtracter:
                             if num_text:
                             # --- THE FIX ---
                             # Correctly indented the following two lines
-                                self.logger.debug(f"Row {i+1}, 5th column se value mili: '{num_text}'")
+                                
                                 total_apartments += int(num_text)
                             # --- END OF FIX ---
                         except (ValueError, IndexError) as e:
-                            self.logger.warning(f"Row {i+1} mein number parse nahi kar paaye: {e}")
+                            
                             continue # Ignore rows that don't have a valid number
                 
-                self.logger.info(f"Total apartments calculate kiye gaye: {total_apartments}")
+                
                 all_keys["total_no_of_apartments"] = str(total_apartments)
 
             else:
@@ -1116,3 +873,360 @@ class DataExtracter:
         except Exception as e:
             self.logger.error(f"Apartment Summary extract nahi kar paaye: {e}")
             return all_keys # Return the dictionary with None values on error
+
+    # works fine too
+    async def _extract_investor_flag(self, page: Page) -> Dict[str, Any]:
+        """
+        (REVISED) Check if there are investors other than the promoter in the project.
+        """
+        self.logger.info("Investor flag ko extract kar rahe hain...")
+        
+        # Define the key for the output dictionary
+        result_key = "are_there_investors_other_than_promoter"
+        
+        try:
+            # --- THE FIX ---
+            # 1. Locate the container that holds both the question and the answer.
+            # This is more stable than looking for siblings.
+            container = page.locator("div.col-sm-12:has(label:has-text('Are there any Investor other than the Promoter'))")
+            await container.wait_for(timeout=7000)
+
+            # 2. Within that container, find the label that contains the answer (the one with the <b> tag).
+            # This selector looks for a label with the specific class that contains a <b> tag.
+            answer_label = container.locator("label.form-label-preview-text > b")
+            
+            # 3. Extract the text from the <b> tag.
+            answer = (await answer_label.inner_text()).strip()
+            # --- END OF FIX ---
+
+            self.logger.info(f"Investor flag found: {answer}")
+            return {result_key: answer}
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract investor info: {e}")
+            return {result_key: None}
+
+    #works fine
+    async def _extract_litigation_details(self, page: Page) -> Dict[str, Any]:
+        """(REVISED) Extract litigation status and count of litigations against the project."""
+        self.logger.info("Litigation details ko extract kar rahe hain...")
+        result_key = "litigation_against_project_count"
+        
+        try:
+            # --- THE FIX ---
+            # A more robust selector: First find the parent container for the whole section.
+            litigation_container = page.locator("div.white-box:has(b:has-text('Litigation Details'))")
+            await litigation_container.wait_for(timeout=7000)
+
+            # Now, find the specific div that contains the question text inside that container.
+            question_container = litigation_container.locator("div:has-text('Is there any litigation against this proposed project :  ')")
+
+            # Finally, get the answer from the bold tag within that question container.
+            answer_label = question_container.locator("label.form-label-preview-text  ")
+            answer_text = (await answer_label.inner_text()).strip().lower()
+            # --- END OF FIX ---
+
+            if answer_text == "no":
+                self.logger.info("Litigation answer is 'No'. Count is 0.")
+                return {result_key: 0}
+
+            # If the answer is 'Yes', the table should be present within the same main container.
+            self.logger.info("Litigation answer is 'Yes'. Table dhoond rahe hain...")
+            
+            table = litigation_container.locator("div.table-responsive > table")
+            await table.wait_for(timeout=5000)
+
+            # Count the rows in the table body
+            rows = table.locator("tbody > tr")
+            row_count = await rows.count()
+            
+            # Handle the case where the table might be visible but empty (e.g., only a "No Data Found" row)
+            if row_count == 1:
+                first_row_text = (await rows.first.text_content() or "").lower()
+                if "no data" in first_row_text or "no record" in first_row_text:
+                    self.logger.info("Litigation table mein 'No Data' row mili. Count is 0.")
+                    return {result_key: 0}
+
+            self.logger.info(f"Litigation table mein {row_count} rows mili.")
+            return {result_key: row_count}
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract litigation info: {e}")
+            return {result_key: None}
+
+    #works fine
+    async def _extract_parking_details(self, page: Page) -> Dict[str, Any]:
+        """(REVISED) Extracts Open and Closed space parking details from all tables under Parking Details."""
+        self.logger.info("Parking details ko extract kar rahe hain...")
+        
+        # Define the keys for our final output
+        results = {
+            "open_space_parking_total": None,
+            "closed_space_parking_total": None
+        }
+
+        try:
+            # 1. Locate the accordion button for Parking Details
+            button = page.locator("button:has-text('Parking Details')")
+            await button.wait_for(timeout=7000)
+            
+            # 2. Click the button to expand the section
+            parking_section_selector = "div#parkingDetails"
+            parking_section = page.locator(parking_section_selector)
+            
+            if not "show" in (await parking_section.get_attribute("class") or ""):
+                self.logger.info("Parking Details accordion band hai, click kar rahe hain...")
+                await button.click()
+                await expect(parking_section).to_have_class(re.compile(r".*\bshow\b.*"), timeout=5000)
+                self.logger.info("Parking details section ab visible hai.")
+            else:
+                self.logger.info("Parking details section pehle se khula hai.")
+
+            # 3. Find all tables within the visible parking section
+            tables = parking_section.locator("div.table-responsive > table")
+            table_count = await tables.count()
+            self.logger.info(f"Parking section mein {table_count} table(s) mili.")
+
+            if table_count == 0:
+                return results
+
+            open_counts = []
+            closed_counts = []
+
+            # 4. Loop through each table found
+            for i in range(table_count):
+                table = tables.nth(i)
+                rows = await table.locator("tbody tr").all()
+                
+                open_sum_for_table = 0
+                closed_sum_for_table = 0
+
+                # 5. Loop through each row in the current table
+                for row in rows:
+                    cells = await row.locator("td").all()
+                    # --- THE FIX ---
+                    # The table now has 8 columns of data, so we check for at least that many
+                    if len(cells) < 8: continue 
+
+                    try:
+                        # Column 2 (index 1) has the Parking Type
+                        parking_type = (await cells[1].inner_text()).strip().lower()
+                        # Column 6 (index 5) has the "Total No Of Parking"
+                        count_text = (await cells[6].inner_text()).strip()
+                        # --- END OF FIX ---
+                        
+                        count = int(count_text) if count_text.isdigit() else 0
+
+                        if "open" in parking_type:
+                            open_sum_for_table += count
+                        elif "closed" in parking_type or "covered" in parking_type:
+                            closed_sum_for_table += count
+                    except (ValueError, IndexError):
+                        continue
+                
+                open_counts.append(str(open_sum_for_table))
+                closed_counts.append(str(closed_sum_for_table))
+
+            # 6. Join the counts from all tables into a comma-separated string
+            results["open_space_parking_total"] = ", ".join(open_counts)
+            results["closed_space_parking_total"] = ", ".join(closed_counts)
+            
+            self.logger.info(f"Successfully extracted parking details: {results}")
+            return results
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract parking details: {e}")
+            return results
+
+    #works fine
+    async def _extract_bank_details(self, page: Page) -> Dict[str, Optional[str]]:
+        """
+        (REVISED) Extracts Bank Name, IFSC Code, and Bank Address from the new UI.
+        """
+        self.logger.info("🔍 Extracting Bank Details...")
+
+        # Define the keys for our output dictionary
+        result = {
+            "bank_name": None,
+            "ifsc_code": None,
+            "bank_address": None
+        }
+        
+        # This map links the text on the page to the keys in our dictionary
+        fields_to_extract = {
+            "Bank Name": "bank_name",
+            "IFSC Code": "ifsc_code",
+            "Bank Address": "bank_address"
+        }
+
+        try:
+            # 1. Find the main container for the bank details section.
+            container = page.locator("project-bank-details-preview fieldset").nth(0)
+            await container.wait_for(timeout=7000)
+
+            # 2. Loop through each field we want to extract
+            for label_text, dict_key in fields_to_extract.items():
+                try:
+                    # 3. Find the label element by its text
+                    label_locator = container.locator(f"label.form-label:has-text('{label_text}')")
+                    
+                   
+                    value_locator = label_locator.locator("xpath=following-sibling::div[1]")
+
+                    # --- END OF FIX ---
+                    
+                    value = (await value_locator.inner_text()).strip()
+                    result[dict_key] = value
+                    self.logger.debug(f"✅ {label_text}: {value}")
+                    
+                except Exception as inner_e:
+                    self.logger.warning(f"⚠️ Could not find bank field '{label_text}': {inner_e}")
+                    continue
+
+            self.logger.info(f"✅ Extracted bank details: {result}")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to extract bank details section: {e}")
+            return result # Return the dictionary with None values
+
+    #works fine
+    async def _extract_complaint_details(self, page: Page) -> Dict[str, Any]:
+        """
+        (REVISED) Extracts the number of complaints and all complaint numbers 
+        from the 'Complaint Details' section.
+        """
+        self.logger.info("🔍 Extracting Complaint Details...")
+        
+        # Define the keys for our output dictionary
+        result = {
+            "complaint_count": 0,
+            "complaint_numbers": None
+        }
+
+        try:
+            # 1. Locate the parent container for the 'Complaint Details' section.
+            container = page.locator("div.white-box:has(b:has-text('Complaint Details'))")
+            await container.wait_for(timeout=7000)
+            
+            # 2. Find the table within that container.
+            table = container.locator("div.table-responsive > table")
+            await table.wait_for(timeout=5000)
+
+            # 3. Get all rows from the table body.
+            rows = table.locator("tbody tr")
+            row_count = await rows.count()
+
+            # 4. Handle cases where there are no complaints.
+            if row_count == 0:
+                self.logger.info("Complaint table is empty. Count is 0.")
+                return result
+            
+            # Check for a "No Data Found" message in the first row.
+            if row_count == 1:
+                first_row_text = (await rows.first.text_content() or "").lower()
+                if "no data" in first_row_text or "no record" in first_row_text:
+                    self.logger.info("Complaint table has a 'No Data' row. Count is 0.")
+                    return result
+
+            # 5. Loop through the rows and extract the complaint numbers.
+            complaint_numbers = []
+            for i in range(row_count):
+                row = rows.nth(i)
+                cells = await row.locator("td").all()
+                
+                # The complaint number is in the second column (index 1).
+                if len(cells) > 1:
+                    complaint_no = (await cells[1].text_content() or "").strip()
+                    if complaint_no: # Ensure we don't add empty strings
+                        complaint_numbers.append(complaint_no)
+
+            # 6. Finalize the results.
+            if complaint_numbers:
+                result["complaint_count"] = len(complaint_numbers)
+                result["complaint_numbers"] = ", ".join(complaint_numbers)
+                
+            self.logger.info(f"Successfully extracted {result['complaint_count']} complaint(s).")
+            return result
+
+        except Exception as e:
+            # If the section doesn't exist or another error occurs, return the default empty result.
+            self.logger.warning(f"❌ Could not extract complaint details: {e}")
+            return result
+
+
+    async def _extract_real_estate_agents(self, page: Page) -> Dict[str, Any]:
+        """
+        (REVISED) Extracts Real Estate Agent details from the new UI with more robust logic.
+        """
+        self.logger.info("🔍 Extracting Registered Real Estate Agent(s)...")
+        
+        result = {
+            "real_estate_agent_names": None,
+            "maharera_certificate_nos": None
+        }
+
+        try:
+            # 1. Locate the accordion button.
+            button = page.locator("button:has-text('Registered Agent(s)')")
+            await button.wait_for(timeout=7000)
+
+            # 2. Locate the table using the button's target ID.
+            target_id = await button.get_attribute("data-bs-target")
+            if not target_id:
+                raise Exception("Could not find 'data-bs-target' on the agent accordion button.")
+            
+            table = page.locator(f"{target_id} div.table-responsive > table")
+
+            # 3. THE FIX: Check if the TABLE is visible. If not, click the button and wait for it.
+            if not await table.is_visible():
+                self.logger.info("Real Estate Agent table not visible, clicking accordion...")
+                await button.click()
+                await table.wait_for(state="visible", timeout=5000)
+                self.logger.info("Agent table is now visible.")
+            else:
+                self.logger.info("Agent table was already visible.")
+            # --- END OF FIX ---
+
+            # 4. Get all data rows from the table body.
+            rows = table.locator("tbody tr")
+            row_count = await rows.count()
+
+            # 5. Handle cases with no agents listed.
+            if row_count == 0:
+                self.logger.info("Agent table is empty. Skipping.")
+                return result
+            
+            if row_count == 1:
+                first_row_text = (await rows.first.text_content() or "").lower()
+                if "no data" in first_row_text or "no record" in first_row_text:
+                    self.logger.info("Agent table has a 'No Data' row. Skipping.")
+                    return result
+
+            # 6. Loop through rows and extract the required data.
+            agent_names = []
+            cert_numbers = []
+            for i in range(row_count):
+                row = rows.nth(i)
+                cells = await row.locator("td").all()
+                
+                if len(cells) > 2:
+                    name = (await cells[1].text_content() or "").strip()
+                    cert_no = (await cells[2].text_content() or "").strip()
+                    if name:
+                        agent_names.append(name)
+                    if cert_no:
+                        cert_numbers.append(cert_no)
+
+            # 7. Finalize and return the comma-separated results.
+            if agent_names:
+                result["real_estate_agent_names"] = ", ".join(agent_names)
+            if cert_numbers:
+                result["maharera_certificate_nos"] = ", ".join(cert_numbers)
+                
+            self.logger.info(f"Successfully extracted {len(agent_names)} real estate agent(s).")
+            return result
+
+        except Exception as e:
+            self.logger.warning(f"❌ Could not extract real estate agent details: {e}")
+            return result

@@ -73,8 +73,18 @@ def save_record(data: dict, filename: str):
             "summary_total_no_of_reservation",
             "summary_total_no_of_land_owner_investor_share_sale",
             "summary_total_no_of_land_owner_investor_share_not_for_sale",
-            
-            "total_no_of_apartments"
+            "total_no_of_apartments",
+            "are_there_investors_other_than_promoter",
+            "litigation_against_project_count",
+            "open_space_parking_total",
+            "closed_space_parking_total",
+             "bank_name",
+            "ifsc_code",
+            "bank_address",
+             "complaint_count",
+            "complaint_numbers",
+             "real_estate_agent_names",
+            "maharera_certificate_nos"
         ]
 
 
@@ -130,8 +140,8 @@ async def process_url(page, captcha_solver, data_extracter, project_id, view_lin
 
 async def main():
     # --- Dynamic range config ---
-    START_ID = 32268
-    END_ID = 32268
+    START_ID = 3
+    END_ID = 3
     BASE_URL = "https://maharerait.maharashtra.gov.in/public/project/view/"
 
     # Resume capability
@@ -173,3 +183,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

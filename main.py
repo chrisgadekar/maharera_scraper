@@ -46,7 +46,12 @@ def save_record(data: dict, filename: str):
             "promoter_official_communication_address_village",
             "promoter_official_communication_address_pin_code",
             "partner_name",
-            "partner_designation"
+            "partner_designation",
+            "promoter_past_project_names",
+            "promoter_past_project_statuses",
+            "promoter_past_litigation_statuses",
+            # "authorised_signatory_names",
+            # "authorised_signatory_designations"
         ]
 
         df = pd.json_normalize([data])
@@ -101,8 +106,8 @@ async def process_url(page, captcha_solver, data_extracter, project_id, view_lin
 
 async def main():
     # --- Dynamic range config ---
-    START_ID = 55621
-    END_ID = 55622
+    START_ID = 1
+    END_ID = 1
     BASE_URL = "https://maharerait.maharashtra.gov.in/public/project/view/"
 
     # Resume capability

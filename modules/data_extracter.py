@@ -26,8 +26,8 @@ class DataExtracter:
                 self._extract_project_address(page),
                 self._extract_promoter_details(page),
                 self._extract_promoter_address(page),
-                # self._extract_partner_details(page),
-                # self._extract_promoter_past_experience(page),
+                self._extract_partner_details(page),
+                self._extract_promoter_past_experience(page),
                 # self._extract_authorised_signatory(page),
                 # self._extract_project_professionals(page),
                 # self._extract_sro_details(page),
@@ -393,34 +393,32 @@ class DataExtracter:
 
     async def _switch_to_tab(self, page: Page, tab_name: str):
         """
-        Clicks a specific tab button by its visible text and waits for the
-        first table row under that tab to appear.
+        Clicks a specific tab button by its visible text.
+        Does NOT wait for any table — that should be handled by the caller.
         """
         try:
-            # Locate the tab button by visible text
             button = page.locator(f"div.tabs button:has-text('{tab_name}')")
             if await button.count() == 0:
                 raise ValueError(f"No tab button found with name '{tab_name}'")
 
             await button.first.click()
 
-            # Wait for a table row to appear — more reliable than networkidle
-            await page.locator("table tbody tr td").first.wait_for(timeout=7000)
+            await expect(button.first).to_have_class(re.compile(r".*\bactive\b.*"), timeout=5000)
+
+            # Optional: Wait for the tab to become 'active' (CSS class check)
+            # try:
+            #     await expect(button.first).to_have_class(re.compile(r".*\bactive\b.*"), timeout=3000)
+            # except:
+            #     self.logger.debug(f"Tab '{tab_name}' did not get 'active' class quickly.")
 
         except Exception as e:
-            self.logger.error(f"Failed to switch to or load tab '{tab_name}': {e}")
+            self.logger.error(f"Failed to switch to tab '{tab_name}': {e}")
             raise
 
-
     async def _extract_partner_details(self, page: Page) -> Dict[str, Any]:
-        """
-        Clicks the first visible tab in the tabs container and scrapes the
-        'Name' and 'Designation' columns from the resulting table.
-        """
         default_return = {'partner_name': None, 'partner_designation': None}
 
         try:
-            # Get the first tab button inside the container
             first_button = page.locator("div.tabs button").first
             if await first_button.count() == 0:
                 self.logger.warning("No partner/director tab button found.")
@@ -431,13 +429,20 @@ class DataExtracter:
                 self.logger.warning("First tab button has no text.")
                 return default_return
 
-            # Switch to that tab and wait for table
+            # Switch to that tab (no table wait here)
             await self._switch_to_tab(page, tab_name)
 
-            # Locate the table inside the content panel
+            # Now check for table presence
             table = page.locator("project-personnel-modal-preview table")
             if await table.count() == 0:
                 self.logger.info(f"No table found under tab '{tab_name}'.")
+                return default_return
+
+            # Wait for at least one cell, but handle no-data case gracefully
+            try:
+                await table.locator("tbody tr td").first.wait_for(timeout=5000)
+            except:
+                self.logger.info(f"Table under '{tab_name}' has no rows.")
                 return default_return
 
             rows = table.locator("tbody tr")
@@ -445,7 +450,6 @@ class DataExtracter:
             if row_count == 0:
                 return default_return
 
-            # Extract names and designations
             name_list, designation_list = [], []
             for i in range(row_count):
                 row = rows.nth(i)
@@ -465,103 +469,116 @@ class DataExtracter:
         except Exception as e:
             self.logger.warning(f"❌ Could not extract Partner/Director Details: {e}")
             return default_return
-    
 
-    async def _extract_promoter_past_experience(self, page: Page) -> Dict[str, Any]:
-        """Extract promoter past experience: Name, Project Status, Litigation Status"""
+
+    async def _extract_promoter_past_experience(self, page: Page) -> dict:
+        """
+        Clicks the 'Past Experience' tab and extracts:
+        - promoter_past_project_names (col 2)
+        - promoter_past_project_statuses (col 5)
+        - promoter_past_litigation_statuses (col 6)
+        Returns None for each if table is missing or empty.
+        """
+        default_return = {
+            "promoter_past_project_names": None,
+            "promoter_past_project_statuses": None,
+            "promoter_past_litigation_statuses": None
+        }
+
         try:
-            # Locate the table under the Past Experience section
-            section = page.locator("project-legal-past-experience-preview")
-            table = section.locator("table.table-bordered.table-striped")
+            # Click the "Past Experience" tab
+            past_exp_btn = page.locator("div.tabs button:has-text('Promoter Past Experience Details')")
+            if await past_exp_btn.count() == 0:
+                self.logger.warning("Past Experience tab not found.")
+                return default_return
 
-            # Get all rows from tbody
-            rows = table.locator("tbody tr")
-            count = await rows.count()
+            await past_exp_btn.first.click()
 
-            names = []
-            statuses = []
-            litigations = []
+            # Wait for the tab to become active
+            await expect(past_exp_btn.first).to_have_class(re.compile(r".*\bactive\b.*"))
 
-            for i in range(count):
-                row = rows.nth(i)
-                cols = row.locator("td")
+            # Wait for table rows
+            table_rows = page.locator("project-legal-past-experience-preview table tbody tr")
+            try:
+                await table_rows.first.wait_for(timeout=5000)
+            except:
+                self.logger.info("Past Experience table not found or empty.")
+                return default_return
 
-                name = await cols.nth(1).inner_text()        # Project Name
-                status = await cols.nth(4).inner_text()      # Project Status
-                litigation = await cols.nth(5).inner_text()  # Litigation Status
+            # Collect data
+            names, statuses, litigations = [], [], []
+            total_rows = await table_rows.count()
 
-                names.append(name.strip())
-                statuses.append(status.strip())
-                litigations.append(litigation.strip())
+            for i in range(total_rows):
+                row = table_rows.nth(i)
+                col2 = (await row.locator("td").nth(1).text_content() or "").strip()
+                col5 = (await row.locator("td").nth(4).text_content() or "").strip()
+                col6 = (await row.locator("td").nth(5).text_content() or "").strip()
+
+                if col2:
+                    names.append(col2)
+                if col5:
+                    statuses.append(col5)
+                if col6:
+                    litigations.append(col6)
 
             return {
-                "promoter_past_project_names": ", ".join(names),
-                "promoter_past_project_statuses": ", ".join(statuses),
-                "promoter_past_litigation_statuses": ", ".join(litigations),
+                "promoter_past_project_names": ", ".join(names) if names else None,
+                "promoter_past_project_statuses": ", ".join(statuses) if statuses else None,
+                "promoter_past_litigation_statuses": ", ".join(litigations) if litigations else None
             }
 
         except Exception as e:
             self.logger.warning(f"❌ Could not extract Promoter Past Experience: {e}")
-            return {
-                "promoter_past_project_names": None,
-                "promoter_past_project_statuses": None,
-                "promoter_past_litigation_statuses": None
-            }
+            return default_return
 
 
-    async def _extract_authorised_signatory(self, page: Page) -> Dict[str, Any]:
-        """Extract authorised signatory details: Professional Name and Designation."""
-        try:
-            # Locate the bold heading
-            heading = page.locator("b:has-text('Authorised Signatory')")
-            await heading.wait_for(timeout=5000)
+    # async def _extract_authorised_signatory(self, page: Page) -> Dict[str, Any]:
+    #     """Extract authorised signatory details: Professional Name and Designation."""
+    #     default_return = {
+    #         "authorised_signatory_names": None,
+    #         "authorised_signatory_designations": None
+    #     }
+    #     try:
+    #         # Switch using the reusable helper
+    #         await self._switch_to_tab(page, "Authorised Signatory Details")
 
-            # Navigate to the sibling div that contains the table
-            container_div = heading.locator("xpath=parent::div/following-sibling::div[1]")
-            table = container_div.locator("table.table-bordered")
+    #         # Locate the table
+    #         table = page.locator("table.table-bordered")
+    #         rows = table.locator("tbody tr")
+    #         row_count = await rows.count()
 
-            # Wait for the first table row to appear or check for "No Record"
-            await table.wait_for(timeout=5000)
+    #         # Handle "No Record Found"
+    #         if row_count == 1:
+    #             only_row_text = (await rows.nth(0).inner_text()).strip().lower()
+    #             if "no record found" in only_row_text:
+    #                 return default_return
 
-            rows = table.locator("tbody tr")
-            row_count = await rows.count()
+    #         professional_names = []
+    #         designations = []
 
-            if row_count == 1:
-                # Check if this row is "No Record Found"
-                only_row_text = await rows.nth(0).inner_text()
-                if "no record found" in only_row_text.lower():
-                    return {
-                        "authorised_signatory_names": None,
-                        "authorised_signatory_designations": None
-                    }
+    #         for i in range(row_count):
+    #             cells = rows.nth(i).locator("td")
+    #             if await cells.count() < 3:
+    #                 continue
+    #             name = (await cells.nth(1).inner_text()).strip()
+    #             designation = (await cells.nth(2).inner_text()).strip()
+    #             professional_names.append(name)
+    #             designations.append(designation)
 
-            professional_names = []
-            designations = []
+    #         return {
+    #             "authorised_signatory_names": ", ".join(professional_names) if professional_names else None,
+    #             "authorised_signatory_designations": ", ".join(designations) if designations else None
+    #         }
 
-            for i in range(row_count):
-                row = rows.nth(i)
-                cells = row.locator("td")
+    #     except Exception as e:
+    #         self.logger.warning(f"❌ Could not extract Authorised Signatory data: {e}")
+    #         return default_return
 
-                if await cells.count() < 3:
-                    continue  # Skip incomplete rows
 
-                name = await cells.nth(1).inner_text()
-                designation = await cells.nth(2).inner_text()
 
-                professional_names.append(name.strip())
-                designations.append(designation.strip())
 
-            return {
-                "authorised_signatory_names": ", ".join(professional_names),
-                "authorised_signatory_designations": ", ".join(designations)
-            }
 
-        except Exception as e:
-            self.logger.warning(f"❌ Could not extract Authorised Signatory data: {e}")
-            return {
-                "authorised_signatory_names": None,
-                "authorised_signatory_designations": None
-            }
 
     async def _extract_project_professionals(self, page: Page) -> dict:
         data = {

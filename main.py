@@ -45,13 +45,15 @@ def save_record(data: dict, filename: str):
             "promoter_official_communication_address_taluka",
             "promoter_official_communication_address_village",
             "promoter_official_communication_address_pin_code",
-            # "partner_name",
-            # "partner_designation",
-            # "promoter_past_project_names",
-            # "promoter_past_project_statuses",
-            # "promoter_past_litigation_statuses",
-            # "authorised_signatory_names",
-            # "authorised_signatory_designations"
+
+              "project_id",
+            "partner_name", "partner_designation",
+            "promoter_past_project_names", "promoter_past_project_statuses", "promoter_past_litigation_statuses",
+            "authorised_signatory_names", "authorised_signatory_designations",
+            "architect_names", "engineer_names", "other_professional_names",
+            "sro_name", "sro_document_name"
+
+
              "building_identification_plan",
             "wing_identification_plan",
             "sanctioned_floors",
@@ -140,8 +142,8 @@ async def process_url(page, captcha_solver, data_extracter, project_id, view_lin
 
 async def main():
     # --- Dynamic range config ---
-    START_ID = 1
-    END_ID = 20
+    START_ID = 32269
+    END_ID = 32278
     BASE_URL = "https://maharerait.maharashtra.gov.in/public/project/view/"
 
     # Resume capability

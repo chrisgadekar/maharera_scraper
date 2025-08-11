@@ -26,16 +26,15 @@ class DataExtracter:
                 self._extract_project_address(page),
                 self._extract_promoter_details(page),
                 self._extract_promoter_address(page),
-                # self._extract_partner_details(page),
-                # self._extract_promoter_past_experience(page),
-                # self._extract_authorised_signatory(page),
+
+
+                self._extract_all_tab_data(page),
 
                 self._extract_latest_form_dates(page),
                  self._extract_investor_flag(page),
                 self._extract_litigation_details(page),
                 self._extract_building_details(page),
                 self._extract_apartment_summary(page),
-               
                 self._extract_parking_details(page),
                 self._extract_bank_details(page),
                 self._extract_complaint_details(page),
@@ -43,16 +42,7 @@ class DataExtracter:
 
 
 
-                # self._extract_project_professionals(page),
-                # self._extract_sro_details(page),
-                # self._extract_landowner_type(page),
-                # self._extract_investor_flag(page),
-                # self._extract_litigation_details(page),
-                # self._extract_building_details(page),
-                # self._extract_parking_details(page),
-                # self._extract_bank_details(page),
-                # self._extract_complaint_details(page),
-                # self._extract_real_estate_agents(page)
+                
                 
             ]
 
@@ -405,189 +395,166 @@ class DataExtracter:
                 for field in fields_to_extract
             }
 
-    # async def _switch_to_tab(self, page: Page, tab_name: str):
-    #     """
-    #     Clicks a specific tab button by its visible text.
-    #     Does NOT wait for any table — that should be handled by the caller.
-    #     """
-    #     try:
-    #         button = page.locator(f"div.tabs button:has-text('{tab_name}')")
-    #         if await button.count() == 0:
-    #             raise ValueError(f"No tab button found with name '{tab_name}'")
 
-    #         await button.first.click()
+    # works fine
+    async def _extract_all_tab_data(self, page: Page) -> Dict[str, Any]:
+        """
+        Robust tab extraction:
+        - Clicks each tab button
+        - Finds the .tabs ancestor of that button
+        - Searches the following sibling div[1] and div[2] for nested <table>
+        - Waits for table visibility before scraping rows
+        Returns a flat dictionary of extracted values.
+        """
+        self.logger.info("--- Starting Robust Sequential Tab Extraction ---")
+        all_tab_data: Dict[str, Any] = {}
 
-    #         await expect(button.first).to_have_class(re.compile(r".*\bactive\b.*"), timeout=5000)
+        TAB_SELECTOR_MAP = {
+            "Partner Details": "partner_details",
+            "Promoter Past Experience": "promoter_past_experience",
+            "Authorised Signatory": "authorised_signatory",
+            "Project Professionals": "project_professionals",
+            "SRO Details": "sro_details",
+        }
 
-    #         # Optional: Wait for the tab to become 'active' (CSS class check)
-    #         # try:
-    #         #     await expect(button.first).to_have_class(re.compile(r".*\bactive\b.*"), timeout=3000)
-    #         # except:
-    #         #     self.logger.debug(f"Tab '{tab_name}' did not get 'active' class quickly.")
+        SKIP_TABS = ["Single Point of Contact", "Allottee Grievance"]
 
-    #     except Exception as e:
-    #         self.logger.error(f"Failed to switch to tab '{tab_name}': {e}")
-    #         raise
+        try:
+            tab_buttons = await page.locator(".tabs button").all()
+            self.logger.info(f"Found {len(tab_buttons)} tab buttons.")
 
-    # async def _extract_partner_details(self, page: Page) -> Dict[str, Any]:
-    #     default_return = {'partner_name': None, 'partner_designation': None}
+            for idx, btn in enumerate(tab_buttons, start=1):
+                raw_name = (await btn.text_content()) or ""
+                tab_name = raw_name.strip()
+                self.logger.info(f"Found Tab {idx}: '{tab_name}'")
 
-    #     try:
-    #         first_button = page.locator("div.tabs button").first
-    #         if await first_button.count() == 0:
-    #             self.logger.warning("No partner/director tab button found.")
-    #             return default_return
+                if any(skip in tab_name for skip in SKIP_TABS):
+                    self.logger.info(f"Skipping Tab {idx} ('{tab_name}') — not required.")
+                    continue
 
-    #         tab_name = (await first_button.text_content() or "").strip()
-    #         if not tab_name:
-    #             self.logger.warning("First tab button has no text.")
-    #             return default_return
+                matched_key = None
+                for k in TAB_SELECTOR_MAP.keys():
+                    if k.lower() in tab_name.lower():
+                        matched_key = k
+                        break
 
-    #         # Switch to that tab (no table wait here)
-    #         await self._switch_to_tab(page, tab_name)
+                if not matched_key:
+                    self.logger.info(f"Skipping Tab {idx} ('{tab_name}') — not in target map.")
+                    continue
 
-    #         # Now check for table presence
-    #         table = page.locator("project-personnel-modal-preview table")
-    #         if await table.count() == 0:
-    #             self.logger.info(f"No table found under tab '{tab_name}'.")
-    #             return default_return
+                self.logger.info(f"Processing Tab {idx}: '{tab_name}' (matched {matched_key})")
 
-    #         # Wait for at least one cell, but handle no-data case gracefully
-    #         try:
-    #             await table.locator("tbody tr td").first.wait_for(timeout=5000)
-    #         except:
-    #             self.logger.info(f"Table under '{tab_name}' has no rows.")
-    #             return default_return
+                try:
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(force=True)
+                except Exception as e:
+                    self.logger.warning(f"Could not click tab button for '{tab_name}': {e}")
+                    continue
 
-    #         rows = table.locator("tbody tr")
-    #         row_count = await rows.count()
-    #         if row_count == 0:
-    #             return default_return
+                try:
+                    tabs_container = btn.locator("xpath=ancestor::div[contains(@class,'tabs')]")
+                    sibling_candidates = [
+                        tabs_container.locator("xpath=following-sibling::div[1]"),
+                        tabs_container.locator("xpath=following-sibling::div[2]")
+                    ]
 
-    #         name_list, designation_list = [], []
-    #         for i in range(row_count):
-    #             row = rows.nth(i)
-    #             name_text = (await row.locator("td").nth(1).text_content() or "").strip()
-    #             designation_text = (await row.locator("td").nth(2).text_content() or "").strip()
+                    table_locator = None
+                    found_in = None
 
-    #             if name_text:
-    #                 name_list.append(name_text)
-    #             if designation_text:
-    #                 designation_list.append(designation_text)
+                    for idx_sib, sib in enumerate(sibling_candidates, start=1):
+                        candidate_table = sib.locator("xpath=.//table").first
+                        try:
+                            await candidate_table.wait_for(state="visible", timeout=5000)
+                            table_locator = candidate_table
+                            found_in = f"sibling_{idx_sib}"
+                            break
+                        except:
+                            continue
 
-    #         return {
-    #             'partner_name': ', '.join(name_list) if name_list else None,
-    #             'partner_designation': ', '.join(designation_list) if designation_list else None
-    #         }
+                    if table_locator is None:
+                        self.logger.warning(f"No visible table found for tab '{tab_name}' in sibling divs.")
+                        continue
 
-    #     except Exception as e:
-    #         self.logger.warning(f"❌ Could not extract Partner/Director Details: {e}")
-    #         return default_return
+                    self.logger.info(f"Table for '{tab_name}' found in: {found_in}.")
+                    # Prefer tbody rows if present
+                    if await table_locator.locator("tbody tr").count() > 0:
+                        rows = await table_locator.locator("tbody tr").all()
+                    else:
+                        rows = await table_locator.locator("tr").all()
 
+                    self.logger.info(f"Found {len(rows)} rows in table for '{tab_name}'.")
 
-    # async def _extract_promoter_past_experience(self, page: Page) -> dict:
-    #     """
-    #     Clicks the 'Past Experience' tab and extracts:
-    #     - promoter_past_project_names (col 2)
-    #     - promoter_past_project_statuses (col 5)
-    #     - promoter_past_litigation_statuses (col 6)
-    #     Returns None for each if table is missing or empty.
-    #     """
-    #     default_return = {
-    #         "promoter_past_project_names": None,
-    #         "promoter_past_project_statuses": None,
-    #         "promoter_past_litigation_statuses": None
-    #     }
+                    # --- per-tab extraction logic ---
+                    if matched_key == "Partner Details":
+                        names, desigs = [], []
+                        for row in rows:
+                            cells = await row.locator("td").all()
+                            if len(cells) > 2:
+                                names.append((await cells[1].text_content() or "").strip())
+                                desigs.append((await cells[2].text_content() or "").strip())
+                        all_tab_data["partner_name"] = ", ".join(filter(None, names))
+                        all_tab_data["partner_designation"] = ", ".join(filter(None, desigs))
 
-    #     try:
-    #         # Click the "Past Experience" tab
-    #         past_exp_btn = page.locator("div.tabs button:has-text('Promoter Past Experience Details')")
-    #         if await past_exp_btn.count() == 0:
-    #             self.logger.warning("Past Experience tab not found.")
-    #             return default_return
+                    elif matched_key == "Promoter Past Experience":
+                        names, statuses, litigations = [], [], []
+                        for row in rows:
+                            cells = await row.locator("td").all()
+                            if len(cells) > 5:
+                                names.append((await cells[1].text_content() or "").strip())
+                                statuses.append((await cells[4].text_content() or "").strip())
+                                litigations.append((await cells[5].text_content() or "").strip())
+                        all_tab_data["promoter_past_project_names"] = ", ".join(filter(None, names))
+                        all_tab_data["promoter_past_project_statuses"] = ", ".join(filter(None, statuses))
+                        all_tab_data["promoter_past_litigation_statuses"] = ", ".join(filter(None, litigations))
 
-    #         await past_exp_btn.first.click()
+                    elif matched_key == "Authorised Signatory":
+                        names, desigs = [], []
+                        for row in rows:
+                            cells = await row.locator("td").all()
+                            if len(cells) > 2:
+                                names.append((await cells[1].text_content() or "").strip())
+                                desigs.append((await cells[2].text_content() or "").strip())
+                        all_tab_data["authorised_signatory_names"] = ", ".join(filter(None, names))
+                        all_tab_data["authorised_signatory_designations"] = ", ".join(filter(None, desigs))
 
-    #         # Wait for the tab to become active
-    #         await expect(past_exp_btn.first).to_have_class(re.compile(r".*\bactive\b.*"))
+                    elif matched_key == "Project Professionals":
+                        architects, engineers, others = [], [], []
+                        for row in rows:
+                            cells = await row.locator("td").all()
+                            if len(cells) > 2:
+                                prof_type = (await cells[1].text_content() or "").strip().lower()
+                                prof_name = (await cells[2].text_content() or "").strip()
+                                if "architect" in prof_type:
+                                    architects.append(prof_name)
+                                elif "engineer" in prof_type:
+                                    engineers.append(prof_name)
+                                else:
+                                    others.append(prof_name)
+                        all_tab_data["architect_names"] = ", ".join(filter(None, architects))
+                        all_tab_data["engineer_names"] = ", ".join(filter(None, engineers))
+                        all_tab_data["other_professional_names"] = ", ".join(filter(None, others))
 
-    #         # Wait for table rows
-    #         table_rows = page.locator("project-legal-past-experience-preview table tbody tr")
-    #         try:
-    #             await table_rows.first.wait_for(timeout=5000)
-    #         except:
-    #             self.logger.info("Past Experience table not found or empty.")
-    #             return default_return
+                    elif matched_key == "SRO Details":
+                        sro_names, doc_names = [], []
+                        for row in rows:
+                            cells = await row.locator("td").all()
+                            if len(cells) > 2:
+                                sro_names.append((await cells[1].text_content() or "").strip())
+                                doc_names.append((await cells[2].text_content() or "").strip())
+                        all_tab_data["sro_name"] = ", ".join(filter(None, sro_names))
+                        all_tab_data["sro_document_name"] = ", ".join(filter(None, doc_names))
 
-    #         # Collect data
-    #         names, statuses, litigations = [], [], []
-    #         total_rows = await table_rows.count()
+                except Exception as e:
+                    self.logger.warning(f"Could not process data in tab '{tab_name}': {e}")
 
-    #         for i in range(total_rows):
-    #             row = table_rows.nth(i)
-    #             col2 = (await row.locator("td").nth(1).text_content() or "").strip()
-    #             col5 = (await row.locator("td").nth(4).text_content() or "").strip()
-    #             col6 = (await row.locator("td").nth(5).text_content() or "").strip()
+            self.logger.info("--- Finished Robust Sequential Tab Extraction ---")
+            return all_tab_data
 
-    #             if col2:
-    #                 names.append(col2)
-    #             if col5:
-    #                 statuses.append(col5)
-    #             if col6:
-    #                 litigations.append(col6)
+        except Exception as e:
+            self.logger.error(f"❌ Fatal error during tab extraction: {e}")
+            return {}
 
-    #         return {
-    #             "promoter_past_project_names": ", ".join(names) if names else None,
-    #             "promoter_past_project_statuses": ", ".join(statuses) if statuses else None,
-    #             "promoter_past_litigation_statuses": ", ".join(litigations) if litigations else None
-    #         }
-
-    #     except Exception as e:
-    #         self.logger.warning(f"❌ Could not extract Promoter Past Experience: {e}")
-    #         return default_return
-
-
-    # async def _extract_authorised_signatory(self, page: Page) -> Dict[str, Any]:
-    #     """Extract authorised signatory details: Professional Name and Designation."""
-    #     default_return = {
-    #         "authorised_signatory_names": None,
-    #         "authorised_signatory_designations": None
-    #     }
-    #     try:
-    #         # Switch using the reusable helper
-    #         await self._switch_to_tab(page, " Authorised Signatory ")
-
-    #         # Locate the table
-    #         table = page.locator("div.table-responsive").nth(2).locator("table")
-    #         rows = table.locator("tbody tr")
-    #         row_count = await rows.count()
-
-    #         # Handle "No Record Found"
-    #         if row_count == 1:
-    #             only_row_text = (await rows.nth(0).inner_text()).strip().lower()
-    #             if "no record found" in only_row_text:
-    #                 return default_return
-
-    #         professional_names = []
-    #         designations = []
-
-    #         for i in range(row_count):
-    #             cells = rows.nth(i).locator("td")
-    #             if await cells.count() < 3:
-    #                 continue
-    #             name = (await cells.nth(1).inner_text()).strip()
-    #             designation = (await cells.nth(2).inner_text()).strip()
-    #             professional_names.append(name)
-    #             designations.append(designation)
-
-    #         return {
-    #             "authorised_signatory_names": ", ".join(professional_names) if professional_names else None,
-    #             "authorised_signatory_designations": ", ".join(designations) if designations else None
-    #         }
-
-    #     except Exception as e:
-    #         self.logger.warning(f"❌ Could not extract Authorised Signatory data: {e}")
-    #         return default_return
+  
 
 
     # works fine to extract latest dates
@@ -1154,7 +1121,7 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract complaint details: {e}")
             return result
 
-
+    #works fine
     async def _extract_real_estate_agents(self, page: Page) -> Dict[str, Any]:
         """
         (REVISED) Extracts Real Estate Agent details from the new UI with more robust logic.

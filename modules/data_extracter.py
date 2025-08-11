@@ -31,6 +31,9 @@ class DataExtracter:
                 self._extract_all_tab_data(page),
 
                 self._extract_latest_form_dates(page),
+
+                self.extract_promoter_landowner_details(page),
+
                  self._extract_investor_flag(page),
                 self._extract_litigation_details(page),
                 self._extract_building_details(page),
@@ -65,7 +68,7 @@ class DataExtracter:
 
 
 
-
+#checked
     async def _extract_registration_block(self, page: Page) -> Dict[str, str]:
         try:
             reg_number = await page.locator("label[for='yourUsername']:has-text('Registration Number')").locator("xpath=following-sibling::label[1]").inner_text(timeout=5000)
@@ -83,7 +86,7 @@ class DataExtracter:
             self.logger.warning(f"Could not extract Registration Block: {e}")
             return {}
 
-
+#checked
     async def _extract_project_details_block(self, page: Page) -> Dict[str, str]:
         data = {}
 
@@ -126,7 +129,7 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract Project Details Block: {e}")
             return {}
 
-
+#checked
     async def _extract_planning_authority_block(self, page: Page) -> Dict[str, Optional[str]]:
         """
         Extracts the Planning Authority details from the page.
@@ -173,7 +176,7 @@ class DataExtracter:
             self.logger.error(f"❌ Could not find or process the Planning Authority block: {e}")
             return data
 
-
+#checked
     async def _extract_planning_land_block(self, page: Page) -> Dict[str, Optional[str]]:
         data = {}
         try:
@@ -221,6 +224,7 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract Planning/Land Block at all: {e}")
             return {}
 
+#checked
     async def _extract_commencement_certificate(self, page: Page) -> Dict[str, str]:
         data = {
             "CC/NA Order Issued to": "",
@@ -265,6 +269,7 @@ class DataExtracter:
             self.logger.warning(f"Could not extract Commencement Certificate details: {e}")
             return data
 
+#checked
     async def _extract_project_address(self, page: Page) -> Dict[str, str]:
         """
         Extracts State/UT, District, Taluka, Village, and Pin Code from the 
@@ -299,6 +304,7 @@ class DataExtracter:
                 for lbl in target_labels
             }
 
+#checked
     async def _extract_promoter_details(self, page: Page) -> Dict[str, str]:
         """
         Extracts all promoter details from the 'Promoter Details' section and
@@ -350,6 +356,7 @@ class DataExtracter:
             self.logger.warning(f"❌ Could not extract Promoter Details: {e}")
             return {"promoter_details": None}
 
+#checked
     async def _extract_promoter_address(self, page: Page) -> Dict[str, str]:
         """
         Extracts specific address fields from the 'Promoter Official Communication Address' section.
@@ -397,6 +404,7 @@ class DataExtracter:
 
 
     # works fine
+     #checked
     async def _extract_all_tab_data(self, page: Page) -> Dict[str, Any]:
         """
         Robust tab extraction:
@@ -556,7 +564,7 @@ class DataExtracter:
 
   
 
-
+    #checked
     # works fine to extract latest dates
     async def _extract_latest_form_dates(self, page: Page) -> Dict[str, Optional[str]]:
         """
@@ -631,6 +639,93 @@ class DataExtracter:
         except Exception as e:
             self.logger.error(f"Document Library se dates extract nahi kar paaye: {e}")
             return latest_dates
+
+
+    #checked
+    async def extract_promoter_landowner_details(self, page: Page) -> Dict[str, Any]:
+        """
+        Checks the status of landowner checkboxes and scrapes the conditional table
+        using specific locators to avoid strict mode violations.
+        """
+        landowner_data = {
+            "promoter_is_landowner": False,
+            "has_other_landowners": False,
+            "landowner_names": None,
+            "landowner_types": None,
+            "landowner_share_types": None
+        }
+
+        try:
+            container = page.locator('div.white-box:has-text("Promoter Landowner")')
+            await container.wait_for(state="visible", timeout=7000)
+
+            # Exact locators ka istemal karke checkbox dhundhein
+            promoter_checkbox_container = container.locator('div.form-check1:has(label:text-is("Promoter"))')
+            promoter_checkbox = promoter_checkbox_container.locator('input[type="checkbox"]')
+
+            other_landowners_checkbox_container = container.locator('div.form-check1:has(label:text-is("Promoter Landowner(s)"))')
+            other_landowners_checkbox = other_landowners_checkbox_container.locator('input[type="checkbox"]')
+
+            # Checkbox ka status check karein
+            landowner_data["promoter_is_landowner"] = await promoter_checkbox.is_checked()
+            landowner_data["has_other_landowners"] = await other_landowners_checkbox.is_checked()
+
+            # Agar "Promoter Landowner(s)" checkbox tick kiya hua hai, tabhi table scrape karein
+            if landowner_data["has_other_landowners"]:
+                self.logger.info("Promoter Landowner(s) is checked. Table se data nikal rahe hain...")
+                
+                table = container.locator("div.table-responsive > table")
+                await table.wait_for(state="visible", timeout=5000)
+                
+                rows = table.locator("tbody tr")
+                row_count = await rows.count()
+
+                if row_count == 0 or "no record found" in (await rows.first.inner_text()).lower():
+                    self.logger.info("Landowner table hai lekin khaali hai.")
+                    return landowner_data
+
+                # --- YEH HAI TABLE SCRAPING KA COMPLETE LOGIC ---
+                names, types, shares = [], [], []
+                
+                # Har row ke liye loop chalayein
+                for i in range(row_count):
+                    row = rows.nth(i)
+                    cells = row.locator("td")
+                    
+                    # Har row mein kam se kam 4 cells hone chahiye
+                    if await cells.count() >= 4:
+                        # Column index ke hisab se data nikalein
+                        # Column 1: Name
+                        name = (await cells.nth(1).text_content() or "").strip()
+                        # Column 2: Promoter Land-Owner Type
+                        owner_type = (await cells.nth(2).text_content() or "").strip()
+                        # Column 3: Share Type
+                        share_type = (await cells.nth(3).text_content() or "").strip()
+
+                        # Data ko list mein add karein
+                        names.append(name)
+                        types.append(owner_type)
+                        shares.append(share_type)
+                
+                # Agar data mila hai, to use comma-separated string bana kar save karein
+                if names:
+                    landowner_data["landowner_names"] = ", ".join(filter(None, names))
+                    landowner_data["landowner_types"] = ", ".join(filter(None, types))
+                    landowner_data["landowner_share_types"] = ", ".join(filter(None, shares))
+                # --- SCRAPING LOGIC YAHAN KHATM HOTA HAI ---
+            
+            else:
+                self.logger.info("Promoter Landowner(s) checked nahi hai. Table scrape nahi kar rahe.")
+
+            return landowner_data
+
+        except Exception as e:
+            self.logger.warning(f"Promoter Landowner details extract nahi kar paaye: {e}")
+            return landowner_data
+
+
+
+
 
 
     # works fine extract building details

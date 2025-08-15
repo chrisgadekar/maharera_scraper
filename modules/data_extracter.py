@@ -81,6 +81,8 @@ class DataExtracter:
 
         try:
             for key, label in fields.items():
+                
+                await page.wait_for_selector("div:has-text('Project Name')", timeout=10000)
                 locator = page.locator(f"div:text-is('{label}')").nth(0)
                 value_locator = locator.locator("xpath=following-sibling::div[1]")
                 value = await value_locator.inner_text(timeout=5000)
@@ -108,6 +110,7 @@ class DataExtracter:
         except Exception as e:
             self.logger.warning(f"Could not extract Project Details Block: {e}")
             return {}
+
 
     async def _extract_planning_authority_block(self, page: Page) -> Dict[str, Optional[str]]:
         data = {
@@ -311,20 +314,51 @@ class DataExtracter:
         try:
             tab_buttons = await page.locator(".tabs button").all()
             self.logger.info(f"Found {len(tab_buttons)} tab buttons.")
+
             for idx, btn in enumerate(tab_buttons, start=1):
-                raw_name = (await btn.text_content()) or ""
+                try:
+                    raw_name = (await btn.text_content()) or ""
+                except Exception as e:
+                    self.logger.warning(f"Could not get text for tab button #{idx}: {e}")
+                    continue
+
                 tab_name = raw_name.strip()
+                if not tab_name:
+                    continue
+
+                # Skip if it's in SKIP_TABS
                 if any(skip in tab_name for skip in SKIP_TABS):
                     continue
+
                 matched_key = next((k for k in TAB_SELECTOR_MAP if k.lower() in tab_name.lower()), None)
                 if not matched_key:
                     continue
+
+                # Safe click only if visible & enabled
                 try:
+                    if not await btn.is_visible():
+                        self.logger.info(f"Skipping hidden tab '{tab_name}'")
+                        continue
                     await btn.scroll_into_view_if_needed()
                     await btn.click(force=True)
                 except Exception as e:
-                    self.logger.warning(f"Could not click tab button for '{tab_name}': {e}")
+                    self.logger.warning(f"Could not click tab '{tab_name}': {e}")
                     continue
+
+            # for idx, btn in enumerate(tab_buttons, start=1):
+            #     raw_name = (await btn.text_content()) or ""
+            #     tab_name = raw_name.strip()
+            #     if any(skip in tab_name for skip in SKIP_TABS):
+            #         continue
+            #     matched_key = next((k for k in TAB_SELECTOR_MAP if k.lower() in tab_name.lower()), None)
+            #     if not matched_key:
+            #         continue
+            #     try:
+            #         await btn.scroll_into_view_if_needed()
+            #         await btn.click(force=True)
+            #     except Exception as e:
+            #         self.logger.warning(f"Could not click tab button for '{tab_name}': {e}")
+            #         continue
                 try:
                     # Agar Promoter Past Experience hai to extra wait de
                     extra_timeout = 12000 if matched_key == "Promoter Past Experience" else 5000
@@ -794,3 +828,4 @@ class DataExtracter:
             self.logger.warning(f"Could not extract real estate agent details: {e}")
             # FIX: Corrected the typo from 'res' to 'result'
             return result
+

@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -10,7 +9,6 @@ from modules.data_extracter import DataExtracter
 from typing import Set, Optional
 
 # --- Configuration ---
-# --- Logging setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("MahaReraScraper")
 
@@ -19,14 +17,8 @@ OUTPUT_FILENAME = "maharera_complete_data.csv"
 FAILED_PROJECTS_FILENAME = "maharera_failed_projects.csv"
 
 # --- Scraping Configuration ---
-START_ID = 401
-END_ID = 800
 BASE_URL = "https://maharerait.maharashtra.gov.in/public/project/view/"
-
-# --- Worker counts (12 total = 8 normal + 4 retry) ---
-TOTAL_WORKERS = 16
-RETRY_WORKERS = 5
-NORMAL_WORKERS = TOTAL_WORKERS - RETRY_WORKERS
+TOTAL_WORKERS = 1
 
 # --- Column order for the final CSV ---
 DESIRED_ORDER = [
@@ -70,12 +62,9 @@ DESIRED_ORDER = [
     "maharera_certificate_nos"
 ]
 
-# --- Thread-safe file writing locks ---
 csv_lock = asyncio.Lock()
-failed_csv_lock = asyncio.Lock()
 
 async def save_record(data: dict):
-    """Appends a single successful record to the main CSV file in a thread-safe manner."""
     async with csv_lock:
         try:
             df = pd.json_normalize([data])
@@ -85,38 +74,9 @@ async def save_record(data: dict):
         except Exception as e:
             logger.error(f"Failed to save record for {data.get('project_id')}: {e}")
 
-async def log_failed_project(project_id: int, url: str):
-    """Appends a single failed project to the failure CSV file in a thread-safe manner."""
-    async with failed_csv_lock:
-        try:
-            file_exists = os.path.exists(FAILED_PROJECTS_FILENAME)
-            with open(FAILED_PROJECTS_FILENAME, 'a', newline='', encoding='utf-8') as f:
-                if not file_exists:
-                    f.write("project_id,url\n")
-                f.write(f"{project_id},{url}\n")
-        except Exception as e:
-            logger.error(f"Failed to log failed project {project_id}: {e}")
-
-def get_processed_ids() -> Set[int]:
-    """Reads both success and failure CSVs to get a set of all IDs that have been attempted."""
-    processed_ids = set()
-    for filename in [OUTPUT_FILENAME, FAILED_PROJECTS_FILENAME]:
-        if os.path.exists(filename):
-            try:
-                df = pd.read_csv(filename, usecols=['project_id'], on_bad_lines='skip')
-                processed_ids.update(df['project_id'].dropna().astype(int).tolist())
-            except (ValueError, KeyError, FileNotFoundError) as e:
-                logger.warning(f"Could not read project_id column from {filename}. It might be empty or malformed. Error: {e}")
-    return processed_ids
-
-# ---------------- FIXED function with boolean return for reliability ----------------
 async def process_single_project(page: Page, captcha_solver: CaptchaSolver, data_extracter: DataExtracter, project_id: int, url: str) -> bool:
-    """
-    Handles a single project and returns True on success, False on any failure.
-    """
     try:
         await page.goto(url, wait_until='domcontentloaded', timeout=60000)
-
         success = await captcha_solver.solve_and_fill(
             page=page,
             captcha_selector="canvas#captcahCanvas",
@@ -124,202 +84,150 @@ async def process_single_project(page: Page, captcha_solver: CaptchaSolver, data
             submit_selector="button.btn.btn-primary.next",
             reg_no=str(project_id)
         )
-
         if not success:
             logger.warning(f"CAPTCHA FAILED for project {project_id}.")
             return False
 
-        await page.wait_for_load_state('networkidle', timeout=30000)
-       
+        try:
+            await page.wait_for_selector('p#letter:has-text("Project details not found")', timeout=7000)
+            logger.info(f"✅ HANDLED: Project ID {project_id} does not exist.")
+            null_data = {col: "Project Not Found" for col in DESIRED_ORDER}
+            null_data['project_id'] = project_id
+            null_data['registration_number'] = str(project_id)
+            await save_record(null_data)
+            return True
+        except Exception:
+            logger.info(f"Project {project_id} page is valid, proceeding...")
+            pass
         
-        await page.wait_for_timeout(2500)
-
         data = await data_extracter.extract_project_details(page, str(project_id))
-
         if data:
             data["project_id"] = project_id
             await save_record(data)
             logger.info(f"✅ SUCCESS: Saved data for project {project_id}")
-            return True # Return True on successful save
+            return True
         else:
             logger.warning(f"Data extraction returned None for project {project_id}.")
-            return False # Return False if no data is extracted
-
+            return False
     except Exception as e:
         logger.error(f"FATAL ERROR processing project {project_id}: {e}", exc_info=False)
-        return False # Return False on any exception
+        return False
 
-# ---------------- Helper functions for retry system ----------------
-async def remove_from_failed(project_id: int):
-    """Remove a project ID from failed CSV after a successful retry."""
-    async with failed_csv_lock:
-        if not os.path.exists(FAILED_PROJECTS_FILENAME):
-            return
+async def worker(browser: Browser, queue: asyncio.Queue, failures_queue: asyncio.Queue, captcha_solver: CaptchaSolver, data_extracter: DataExtracter):
+    context: Optional[BrowserContext] = None
+    try:
+        context = await browser.new_context(user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36')
+        page = await context.new_page()
+        await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"] else route.continue_())
+
+        while True:
+            project_id = await queue.get()
+            url = f"{BASE_URL}{project_id}"
+            logger.info(f"Processing project ID: {project_id}")
+            is_successful = await process_single_project(page, captcha_solver, data_extracter, project_id, url)
+            if not is_successful:
+                logger.warning(f"FAILED: Project {project_id}. This will remain in the failed list for the next run.")
+                await failures_queue.put((project_id, url))
+            queue.task_done()
+    except asyncio.CancelledError:
+        logger.info("Worker cancelled.")
+    finally:
+        if context: await context.close()
+
+# <<< FIX 1: New function to get successfully completed IDs ---
+def get_successfully_processed_ids() -> Set[int]:
+    """Reads ONLY the success CSV to get a set of all IDs that are already completed."""
+    processed_ids = set()
+    if os.path.exists(OUTPUT_FILENAME):
         try:
-            rows = []
-            fieldnames = ['project_id', 'url']
-            with open(FAILED_PROJECTS_FILENAME, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                fieldnames = reader.fieldnames or fieldnames
-                for row in reader:
-                    if str(row.get('project_id')) != str(project_id):
-                        rows.append(row)
-            with open(FAILED_PROJECTS_FILENAME, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(rows)
-        except Exception as e:
-            logger.error(f"Error removing project {project_id} from failed list: {e}")
+            # Read only the 'project_id' column to save memory
+            df = pd.read_csv(OUTPUT_FILENAME, usecols=['project_id'], on_bad_lines='skip')
+            # Add valid integer IDs to our set
+            processed_ids.update(df['project_id'].dropna().astype(int).tolist())
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Could not read project_id column from {OUTPUT_FILENAME}. It might be empty or malformed. Error: {e}")
+    return processed_ids
 
-async def log_failed_and_enqueue(project_id: int, url: str, retry_queue: asyncio.Queue):
-    """Append to failed CSV and push ID to retry queue."""
-    await log_failed_project(project_id, url)
-    await retry_queue.put(project_id)
-
-# ---------------- NEW workers: normal + retry ----------------
-async def normal_worker(playwright: Playwright, project_queue: asyncio.Queue, retry_queue: asyncio.Queue,
-                        captcha_solver: CaptchaSolver, data_extracter: DataExtracter):
-    """Processes fresh IDs. On failure, logs + enqueues for retry."""
-    browser: Optional[Browser] = None
-    try:
-        browser = await playwright.firefox.launch(headless=True)
-        context: BrowserContext = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
-        )
-        page: Page = await context.new_page()
-        await page.route("**/*", lambda route: route.abort()
-                         if route.request.resource_type in ["image", "stylesheet", "font", "media"]
-                         else route.continue_())
-
-        while True:
-            project_id = await project_queue.get()
-            url = f"{BASE_URL}{project_id}"
-            logger.info(f"[NORMAL] Processing project ID: {project_id}")
-
-            try:
-                # FIX: Check the reliable boolean status instead of file line count
-                is_successful = await process_single_project(page, captcha_solver, data_extracter, project_id, url)
-                if not is_successful:
-                    await log_failed_and_enqueue(project_id, url, retry_queue)
-            except Exception as e:
-                logger.error(f"[NORMAL] Unexpected crash for {project_id}: {e}")
-                await log_failed_and_enqueue(project_id, url, retry_queue)
-            finally:
-                project_queue.task_done()
-
-    except asyncio.CancelledError:
-        logger.info("[NORMAL] Worker cancelled.")
-    finally:
-        if browser:
-            await browser.close()
-
-async def retry_worker(playwright: Playwright, retry_queue: asyncio.Queue,
-                       captcha_solver: CaptchaSolver, data_extracter: DataExtracter):
-    """Processes failed IDs. On success, remove from failed.csv. On fail, requeue."""
-    browser: Optional[Browser] = None
-    try:
-        browser = await playwright.firefox.launch(headless=True)
-        context: BrowserContext = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
-        )
-        page: Page = await context.new_page()
-        await page.route("**/*", lambda route: route.abort()
-                         if route.request.resource_type in ["image", "stylesheet", "font", "media"]
-                         else route.continue_())
-
-        while True:
-            project_id = await retry_queue.get()
-            url = f"{BASE_URL}{project_id}"
-            logger.info(f"[RETRY] Retrying project ID: {project_id}")
-
-            try:
-                # FIX: Check the reliable boolean status instead of file line count
-                is_successful = await process_single_project(page, captcha_solver, data_extracter, project_id, url)
-                if is_successful:
-                    logger.info(f"✅ RETRY SUCCESS: Project {project_id}")
-                    await remove_from_failed(project_id)
-                else:
-                    logger.warning(f"RETRY FAILED AGAIN: Project {project_id}, re-queuing.")
-                    await asyncio.sleep(2)
-                    await retry_queue.put(project_id)
-            except Exception as e:
-                logger.error(f"[RETRY] Unexpected crash for {project_id}: {e}")
-                await asyncio.sleep(2)
-                await retry_queue.put(project_id)
-            finally:
-                retry_queue.task_done()
-
-    except asyncio.CancelledError:
-        logger.info("[RETRY] Worker cancelled.")
-    finally:
-        if browser:
-            await browser.close()
-
-# ---------------- Main function: runs both queues in parallel ----------------
 async def main():
-    """Main function to set up the scraping environment and run workers in parallel."""
-    logger.info("--- Starting MahaRERA Scraper ---")
-    processed_ids = get_processed_ids()
-    logger.info(f"Found {len(processed_ids)} previously attempted projects. They will be skipped.")
+    logger.info("--- Starting MahaRERA Scraper (File Update Mode) ---")
 
-    project_queue = asyncio.Queue()
-    retry_queue = asyncio.Queue()
+    # <<< FIX 2: Get a list of already completed projects first ---
+    successfully_processed_ids = get_successfully_processed_ids()
+    if successfully_processed_ids:
+        logger.info(f"Found {len(successfully_processed_ids)} already completed projects in {OUTPUT_FILENAME}. They will be skipped.")
 
-    # Queue fresh IDs
-    for i in range(START_ID, END_ID + 1):
-        if i not in processed_ids:
-            await project_queue.put(i)
-
-    # Preload failed IDs into retry queue from previous runs
-    if os.path.exists(FAILED_PROJECTS_FILENAME):
+    projects_to_process = []
+    source_list = []
+    
+    if os.path.exists(FAILED_PROJECTS_FILENAME) and os.path.getsize(FAILED_PROJECTS_FILENAME) > 20:
+        logger.info(f"Found {FAILED_PROJECTS_FILENAME}. Running in RETRY mode.")
         try:
-            df_failed = pd.read_csv(FAILED_PROJECTS_FILENAME, usecols=['project_id'], on_bad_lines='skip')
-            for pid in df_failed['project_id'].dropna().astype(int).tolist():
-                await retry_queue.put(pid)
-            logger.info(f"Loaded {retry_queue.qsize()} IDs from failed list into retry queue.")
+            df_failed = pd.read_csv(FAILED_PROJECTS_FILENAME)
+            source_list = df_failed['project_id'].dropna().astype(int).tolist()
         except Exception as e:
-            logger.warning(f"Failed to preload failed IDs: {e}")
+            logger.error(f"Could not read {FAILED_PROJECTS_FILENAME}: {e}")
+            return
+    else:
+        logger.info("No failed projects file found. Running in INITIAL mode with hardcoded list.")
+        source_list = sorted(list(set([
+            29893, 40000, 56647, 58095, 58260, 58336, 58345, 58402, 58429, 58467, 58475, 58490, 58496, 58498, 58499, 58506, 58509, 58518, 58519, 58520, 58521, 58525, 58527, 58528, 58529, 58530, 58531, 58533, 58536, 58537, 58541, 58547, 58549, 58553, 58555, 58556, 58557, 58558, 58561, 58562, 58564, 58566, 58568, 58572, 58573, 58575, 58576, 58578, 58579, 58580, 58581, 58582, 58587, 58588, 58591, 58593, 58594, 58595, 58596, 58597, 58599, 58605, 58606, 58608, 58610, 58612, 58623, 58625, 58627, 58630, 58632, 58633, 58634, 58636, 58639, 58641, 58642, 58643, 58644, 58645, 58646, 58649, 58650, 58651, 58652, 58653, 58659, 58660, 58661, 58662, 58664, 58668, 58669, 58670, 58671, 58673, 58677, 58678, 58680, 58681, 58683, 58684, 58685, 58686, 58687, 58689, 58690, 58691, 58692, 58693, 58694, 58696, 58697, 58698, 58699, 58700, 58702, 58704, 58705, 58708, 58711, 58713, 58714, 58715, 58717, 58718, 58719, 58721, 58722, 58723, 58724, 58725, 58727, 58728, 58729, 58731, 58732, 58734, 58735, 58736, 58737, 58738, 58743, 58745, 58746, 58747, 58749, 58755, 58757, 58758, 58759, 58761, 58762, 58763, 58765, 58768, 58771, 58772, 58774, 58775, 58786, 58787, 58788, 58789, 58790, 58791, 58792, 58793, 58794, 58795, 58796, 58798, 58799, 58800, 58801, 58802, 58803, 58806, 58807, 58808, 58810, 58811, 58812, 58813, 58815, 58816, 58817, 58818, 58819, 58820, 58821, 58822, 58823, 58825, 58826, 58827, 58828, 58829, 58831, 58832, 58833, 58834, 58837, 58839, 58840, 58841, 58842, 58843, 58844, 58846, 58847, 58848, 58849, 58851, 58853, 58854, 58855, 58856, 58857, 58858, 58859, 58861, 58862, 58863, 58864, 58865, 58866, 58867, 58868, 58869, 58870, 58871, 58872, 58873, 58874, 58876, 58877, 58878, 58879, 58880, 58881, 58882, 58883, 58884, 58885, 58886, 58887, 58888, 58889, 58890, 58891, 58892, 58893, 58894, 58895, 58896, 58898, 58900, 58901, 58902, 58903, 58904, 58905, 58906, 58908, 58909, 58910, 58911, 58912, 58913, 58914, 58915, 58916, 58917, 58918, 58919, 58921, 58922, 58923, 58925, 58926, 58953, 58982
+        ])))
 
-    total_to_process = project_queue.qsize()
-    logger.info(f"Queued {total_to_process} new projects for scraping.")
-    if total_to_process == 0 and retry_queue.qsize() == 0:
-        logger.info("No new or failed projects to process. Exiting.")
+    # <<< FIX 3: Filter the source list to skip already completed projects ---
+    for pid in source_list:
+        if pid not in successfully_processed_ids:
+            projects_to_process.append(pid)
+
+    if not projects_to_process:
+        logger.info("No new projects to process. All seem to be completed. Exiting.")
         return
+        
+    process_queue = asyncio.Queue()
+    failures_queue = asyncio.Queue()
+
+    for pid in projects_to_process:
+        await process_queue.put(pid)
+    
+    logger.info(f"Queued {process_queue.qsize()} projects for this run (skipped {len(source_list) - len(projects_to_process)} already completed ones).")
 
     captcha_solver = CaptchaSolver()
     data_extracter = DataExtracter()
 
     async with async_playwright() as p:
+        browser = await p.firefox.launch(headless=True)
         tasks = []
-        # Start NORMAL workers
-        for _ in range(NORMAL_WORKERS):
+        for _ in range(TOTAL_WORKERS):
             tasks.append(asyncio.create_task(
-                normal_worker(p, project_queue, retry_queue, captcha_solver, data_extracter)
-            ))
-        # Start RETRY workers
-        for _ in range(RETRY_WORKERS):
-            tasks.append(asyncio.create_task(
-                retry_worker(p, retry_queue, captcha_solver, data_extracter)
+                worker(browser, process_queue, failures_queue, captcha_solver, data_extracter)
             ))
 
-        # Wait for the initial queue of projects to be processed
-        await project_queue.join()
-        
-        # Now, wait for the retry queue to become empty, but with a timeout
-        # to prevent it from running forever if some projects always fail.
-        try:
-            await asyncio.wait_for(retry_queue.join(), timeout=300.0) # 5-minute timeout for retries
-        except asyncio.TimeoutError:
-            logger.warning("Retry queue processing timed out. Some projects might remain in the failed list.")
+        await process_queue.join()
 
-        # Gracefully cancel all worker tasks
-        for task in tasks:
-            task.cancel()
+        for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await browser.close()
+
+    remaining_failures = []
+    while not failures_queue.empty():
+        remaining_failures.append(await failures_queue.get())
+
+    if remaining_failures:
+        logger.info(f"Overwriting {FAILED_PROJECTS_FILENAME} with {len(remaining_failures)} remaining failures.")
+        with open(FAILED_PROJECTS_FILENAME, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["project_id", "url"])
+            writer.writerows(remaining_failures)
+    else:
+        logger.info(f"All projects in this run succeeded. Deleting {FAILED_PROJECTS_FILENAME}.")
+        if os.path.exists(FAILED_PROJECTS_FILENAME):
+            os.remove(FAILED_PROJECTS_FILENAME)
 
     logger.info("--- SCRAPING RUN COMPLETE ---")
     logger.info(f"Successful data saved to: {OUTPUT_FILENAME}")
-    logger.info(f"Failed/Skipped projects logged in: {FAILED_PROJECTS_FILENAME}")
+    if remaining_failures:
+        logger.info(f"{len(remaining_failures)} projects failed and are saved in {FAILED_PROJECTS_FILENAME} for the next run.")
+    else:
+        logger.info("No projects failed in this run.")
 
 if __name__ == "__main__":
     asyncio.run(main())

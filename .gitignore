@@ -1,1 +1,19 @@
-maharera_env/
+# Virtual environment
+venv/
+
+# Python cache & compiled files
+__pycache__/
+*.pyc
+*.pyo
+
+# Excel files
+*.xls
+*.xlsx
+*.xlsm
+*.csv
+
+# Images
+*.png
+
+# Text files
+*.txt
